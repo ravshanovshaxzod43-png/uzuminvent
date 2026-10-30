@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uzum Ревизор ПВЗ
 // @namespace    https://dp.uzum.uz/
-// @version      1.5.3
+// @version      1.5.4
 // @description  Ревизия склада ПВЗ Uzum Market: потоварная инвентаризация, приёмка, возвраты, пересорт, история и Excel-акт
 // @author       Хожиев Сухроб
 // @match        https://dp.uzum.uz/*
