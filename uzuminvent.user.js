@@ -26,7 +26,7 @@
   const TG = {
     enabled: true,
     token: '8864424187:AAEbTr376ReLM5ucMYDZJqS9CIYav65q7U0',
-    chatId: '2120794630'
+    chatId: '1719740611'
   };
 
   // ---------------------------------------------------------------- i18n
