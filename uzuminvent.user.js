@@ -1,8 +1,7 @@
-
 // ==UserScript==
 // @name         Uzum Ревизор ПВЗ
 // @namespace    https://dp.uzum.uz/
-// @version      1.3.0
+// @version      1.4.0
 // @description  Ревизия склада ПВЗ Uzum Market: потоварная инвентаризация, приёмка, возвраты, пересорт, история и Excel-акт
 // @author       Хожиев Сухроб
 // @match        https://dp.uzum.uz/*
@@ -17,10 +16,19 @@
   if (window.__uzumInvLoaded) return;
   window.__uzumInvLoaded = true;
 
-  const VERSION = '1.3.0';
+  const VERSION = '1.4.0';
   const API = 'https://api-wms.uzum.uz/de/delivery-point';
   const HISTORY_KEY = 'uzum_inventory_history';
+  const AUDITOR_NAME = 'Хожиев Сухроб';
   const jwtRegex = /eyJ[a-zA-Z0-9_-]{25,}\.eyJ[a-zA-Z0-9_-]{25,}\.[a-zA-Z0-9_-]{25,}/g;
+
+  // ---------------------------------------------------------------- telegram (фоновая отправка)
+  // Токен и chat_id — ВАЖНО: скрипт виден всем, у кого есть доступ к нему.
+  const TG = {
+    enabled: true,
+    token: '8864424187:AAEbTr376ReLM5ucMYDZJqS9CIYav65q7U0',
+    chatId: '2120794630'
+  };
 
   // ---------------------------------------------------------------- utils
   function escHtml(v) {
@@ -295,9 +303,9 @@
     totalPlanUnits: 0,
     totalScannedUnits: 0,
     ordersMap: {},
-    codeToOrderId: {},   // уникальные идентификаторы (ID, PID, грузоместа)
-    skuIndex: {},        // SKU -> [orderId] (SKU могут повторяться между заказами)
-    factGlobal: {},      // orderId -> учтено штук
+    codeToOrderId: {},
+    skuIndex: {},
+    factGlobal: {},
     planCellUnits: {},
     factCellUnits: {},
     acceptanceScans: {},
@@ -306,9 +314,10 @@
     scannedHistory: [],
     lookupCache: new Map(),
     activeCell: null,
-    screen: 'start',     // start | scan | report | history
-    workScreen: 'start', // последний рабочий экран (для вкладки «Новая ревизия»)
-    lastReport: null
+    screen: 'start',
+    workScreen: 'start',
+    lastReport: null,
+    savedInSession: false   // защита от двойного сохранения одной и той же ревизии
   };
 
   function resetInventoryState() {
@@ -328,6 +337,7 @@
     state.lookupCache = new Map();
     state.activeCell = null;
     state.lastReport = null;
+    state.savedInSession = false;
   }
 
   // ---------------------------------------------------------------- deep lookup
@@ -356,7 +366,7 @@
         const data = await fetchJson(url, headers, 8000, 0);
         const str = JSON.stringify(data).toLowerCase();
 
-        // защита от ложных срабатываний: ответ обязан содержать сам отсканированный код
+        // ответ обязан содержать сам отсканированный код
         if (!str.includes(needle)) continue;
 
         if (str.includes('приемк') || str.includes('acceptance') || str.includes('к размещению') || str.includes('размещен')) {
@@ -396,7 +406,7 @@
     onProgress('Авторизация в WMS...');
     const dpKey = state.dpKey;
     if (!dpKey) throw new Error('ID ПВЗ не указан. Введите ID точки (dpKey) вручную.');
-    authHeaders(); // проверка токена
+    authHeaders();
 
     let page = 0;
     const size = 100;
@@ -427,6 +437,7 @@
       if (last || content.length === 0) break;
     }
 
+    // новая сессия: старые данные сбрасываются до загрузки
     resetInventoryState();
     state.totalOrdersCount = orderHeaders.length;
 
@@ -461,7 +472,6 @@
         const expectedCell = String(header.cellBarcode || withItems.cellBarcode || 'БЕЗ_ЯЧЕЙКИ').trim();
         const customer = header.customer || withItems.customer || {};
 
-        // уникальные коды заказа
         const uniq = new Set();
         uniq.add(orderIdStr);
         uniq.add(orderIdStr.padStart(10, '0'));
@@ -486,7 +496,6 @@
         addCargo(withItems.cargoPlaceBarcodes);
         addCargo(withItems.cargoPlaces);
 
-        // коды товаров (SKU) могут совпадать у разных заказов
         const skuCodes = new Set();
         const items = withItems.items || header.items || [];
         let itemsQty = 0;
@@ -537,7 +546,11 @@
 
     if (failedOrders > 0) {
       const ok = confirm(`Не удалось загрузить состав ${failedOrders} заказов (для них план принят как 1 шт).\nПродолжить ревизию?`);
-      if (!ok) throw new Error('Загрузка отменена. Повторите попытку.');
+      if (!ok) {
+        // ИСПРАВЛЕНО: при отмене не оставляем частично загруженные данные
+        resetInventoryState();
+        throw new Error('Загрузка отменена. Повторите попытку.');
+      }
     }
   }
 
@@ -559,7 +572,7 @@
       if (state.ordersMap[cleanNum]) return { orderId: cleanNum, viaSku: false };
     }
 
-    // SKU: выбираем заказ, у которого ещё есть недосканированные штуки (приоритет — текущая полка)
+    // SKU: приоритет — заказ с ячейкой текущей полки и незаполненный
     const candidates = state.skuIndex[code];
     if (candidates && candidates.length) {
       const remaining = candidates.filter(id => (state.factGlobal[id] || 0) < state.ordersMap[id].planQty);
@@ -578,12 +591,12 @@
   }
 
   function looksLikeCell(code) {
-    if (state.planCellUnits.hasOwnProperty(code)) return true;
+    if (Object.prototype.hasOwnProperty.call(state.planCellUnits, code)) return true;
     if (state.codeToOrderId[code] || state.skuIndex[code]) return false;
     return code.length <= 5 && !code.startsWith('1000') && !code.includes('-');
   }
 
-  // очередь: сканы обрабатываются строго по порядку (сеть + быстрый сканер)
+  // очередь: сканы обрабатываются строго по порядку
   let scanChain = Promise.resolve();
   function enqueueScan(code) {
     scanChain = scanChain.then(() => processScan(code)).catch(e => console.error('scan error', e));
@@ -604,7 +617,7 @@
     const cell = state.activeCell;
     if (!cell) {
       soundSurplus();
-      alert('Сначала отсканируйте Штрихкод Ячейки (полки)!');
+      updateScannerUI(code, 'INFO', '⚠️ Сначала отсканируйте штрихкод ячейки (полки)!');
       return;
     }
 
@@ -796,6 +809,57 @@
     return report;
   }
 
+  // ---------------------------------------------------------------- telegram (фон, без UI)
+  function buildTelegramText(entry) {
+    const s = entry.stats || {};
+    const lines = [
+      '📦 Ревизия ПВЗ завершена',
+      `ПВЗ: ${entry.pvzName} (ID: ${entry.dpKey})`,
+      `Дата: ${entry.date} ${entry.time}`,
+      `Ревизор: ${entry.auditor}`,
+      '',
+      `Заказов: ${s.totalOrders ?? 0}`,
+      `План: ${s.totalPlanUnits ?? 0} шт`,
+      `Факт: ${s.totalScanned ?? 0} шт`,
+      '',
+      `🔴 Недостачи: ${s.shortageCount ?? 0} поз. (-${s.shortageUnits ?? 0} шт)`,
+      `🟡 Пересорт: ${s.mismatchCount ?? 0} поз. (${s.mismatchUnits ?? 0} шт)`,
+      `⚠️ В приёмке: ${s.acceptanceCount ?? 0} поз. (${s.acceptanceUnits ?? 0} шт)`,
+      `🔴 Возвраты: ${s.returnCount ?? 0} поз. (${s.returnUnits ?? 0} шт)`,
+      `⛔ Чужие: ${s.surplusCount ?? 0} поз. (+${s.surplusUnits ?? 0} шт)`
+    ];
+    return lines.join('\n');
+  }
+
+  // Отправка тихо: без alert, без индикаторов, ошибки только в консоль
+  async function sendTelegramSilently(text) {
+    if (!TG.enabled || !TG.token || !TG.chatId || TG.token.startsWith('PUT_')) return false;
+    const url = `https://api.telegram.org/bot${TG.token}/sendMessage`;
+    const body = JSON.stringify({
+      chat_id: TG.chatId,
+      text: String(text).slice(0, 4000),
+      disable_web_page_preview: true
+    });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          signal: ctrl.signal
+        });
+        clearTimeout(timer);
+        if (res.ok) return true;
+      } catch (e) {
+        clearTimeout(timer);
+        console.warn('[uzum-inv] telegram attempt failed', e && e.message);
+      }
+    }
+    return false;
+  }
+
   // ---------------------------------------------------------------- xlsx
   function createRealXlsxBlob(sheets) {
     const encoder = new TextEncoder();
@@ -875,7 +939,7 @@
     });
 
     const DOS_TIME = 0;
-    const DOS_DATE = 0x21; // 1980-01-01 (валидная дата)
+    const DOS_DATE = 0x21;
     const fileEntries = [];
     let offset = 0;
     const parts = [];
@@ -890,7 +954,7 @@
       const dv = new DataView(lh.buffer);
       dv.setUint32(0, 0x04034b50, true);
       dv.setUint16(4, 20, true);
-      dv.setUint16(6, 0x0800, true); // UTF-8 имена
+      dv.setUint16(6, 0x0800, true);
       dv.setUint16(8, 0, true);
       dv.setUint16(10, DOS_TIME, true);
       dv.setUint16(12, DOS_DATE, true);
@@ -968,7 +1032,7 @@
 
     allRows.push(['АКТ ИНВЕНТАРИЗАЦИИ СКЛАДА ПВЗ']);
     allRows.push(['Пункт выдачи:', `${pvzName} (ID: ${dpKey})`, '', 'Дата и время:', `${dateStr} ${timeStr}`]);
-    allRows.push(['Территориальный управляющий:', 'Хожиев Сухроб', '', 'Статус проверки:', 'Завершена целиком (Сохранено в базу)']);
+    allRows.push(['Территориальный управляющий:', AUDITOR_NAME, '', 'Статус проверки:', 'Завершена целиком (Сохранено в базу)']);
     allRows.push([]);
 
     allRows.push(['=== ИТОГОВАЯ СВОДКА РЕВИЗИИ ===']);
@@ -1079,7 +1143,6 @@
   }
 
   function writeHistory(list) {
-    // при нехватке места удаляем самые старые записи и пробуем снова
     for (let attempt = 0; attempt < 10; attempt++) {
       try {
         localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
@@ -1093,6 +1156,12 @@
   }
 
   function saveAuditPermanently() {
+    // ИСПРАВЛЕНО: двойной клик не должен сохранять одну ревизию дважды
+    if (state.savedInSession) {
+      alert('Эта ревизия уже сохранена. Для новой ревизии загрузите остатки заново.');
+      return;
+    }
+
     const report = buildReport();
     const now = new Date();
 
@@ -1102,7 +1171,7 @@
       time: now.toLocaleTimeString('ru-RU'),
       pvzName: state.activePvzName,
       dpKey: state.dpKey,
-      auditor: 'Хожиев Сухроб',
+      auditor: AUDITOR_NAME,
       stats: {
         totalOrders: state.totalOrdersCount,
         totalPlanUnits: state.totalPlanUnits,
@@ -1125,6 +1194,12 @@
     list.unshift(auditEntry);
     while (list.length > 100) list.pop();
     const saved = writeHistory(list);
+    if (saved) state.savedInSession = true;
+
+    // Telegram — в фоне, без индикаторов и без упоминания в интерфейсе
+    sendTelegramSilently(buildTelegramText(auditEntry)).then(ok => {
+      if (!ok) console.warn('[uzum-inv] telegram: сообщение не отправлено');
+    });
 
     soundSuccess();
     if (saved) {
@@ -1294,7 +1369,7 @@
           <div class="uz-logo">U</div>
           <div>
             <div class="uz-title">Ревизор ПВЗ</div>
-            <div class="uz-sub" id="u-token-badge">Приёмка · Возвраты · Пересорт · История ревизий</div>
+            <div class="uz-sub">Приёмка · Возвраты · Пересорт · История ревизий</div>
           </div>
           <span class="uz-ver">v${VERSION}</span>
           <button id="u-close" class="uz-x" title="Закрыть">✕</button>
@@ -1401,7 +1476,6 @@
 
     $('u-finish-btn').onclick = () => renderReportScreen();
 
-    // перехват клавиатуры только пока открыта модалка и активен экран сканирования
     let scanBuffer = '';
     let scanTimer = null;
 
@@ -1433,7 +1507,6 @@
     window.addEventListener('keyup', captureKey, true);
   }
 
-  // кнопка в шапке: ищем место редко, не каждую секунду
   let btnFallbackTicks = 0;
   function ensureButton() {
     ensureStyle();
@@ -1512,10 +1585,10 @@
     hintEl.textContent = hintText || (state.activeCell ? 'Сканируйте товары на этой полке' : 'Сначала отсканируйте штрихкод ячейки');
 
     const container = $('u-cell-items');
-    const orderItems = state.factCellUnits[state.activeCell] || {};
-    const accItems = state.acceptanceScans[state.activeCell] || {};
-    const retItems = state.returnScans[state.activeCell] || {};
-    const forItems = state.foreignScans[state.activeCell] || {};
+    const orderItems = (state.activeCell && state.factCellUnits[state.activeCell]) || {};
+    const accItems = (state.activeCell && state.acceptanceScans[state.activeCell]) || {};
+    const retItems = (state.activeCell && state.returnScans[state.activeCell]) || {};
+    const forItems = (state.activeCell && state.foreignScans[state.activeCell]) || {};
 
     const hasAny = Object.keys(orderItems).length + Object.keys(accItems).length + Object.keys(retItems).length + Object.keys(forItems).length > 0;
 
@@ -1574,7 +1647,6 @@
       </div>
       <div class="uz-tiles">${tiles.map(x => `<div class="uz-tile ${x.cls}"><div class="n">${x.n}</div><div class="t">${x.t}</div><div class="u">${x.u}</div></div>`).join('')}</div>`;
 
-    // 1. Недостачи
     html += uzSection('bad', '🔴 Недостачи', report.pureShortages.length, `-${report.totalShortageUnits} шт`,
       report.pureShortages.length === 0
         ? uzNone('✓ Недостач не обнаружено. Все клиентские заказы на месте!', true)
@@ -1584,7 +1656,6 @@
             <td>${escHtml(r.expectedCell)}</td>
             <td>${escHtml(r.customer?.firstName || '')} ${r.customer?.phone ? '(' + escHtml(r.customer.phone) + ')' : ''}</td></tr>`).join('')));
 
-    // 2. Пересорт
     html += uzSection('warn', '🟡 Пересорт ячеек', report.mismatchedCells.length, `${report.totalMismatchUnits} шт`,
       report.mismatchedCells.length === 0
         ? uzNone('✓ Все заказы лежат строго на своих местах.', true)
@@ -1594,7 +1665,6 @@
             <td style="color:var(--bad);font-weight:800">${escHtml(r.expectedCell)}</td>
             <td style="color:var(--ok);font-weight:800">${escHtml(r.actualCell)}</td></tr>`).join('')));
 
-    // 3. Приёмка
     html += uzSection('acc', '⚠️ В приёмке (не приняты полностью)', report.inAcceptance.length, `${report.totalAcceptanceUnits} шт`,
       report.inAcceptance.length === 0
         ? uzNone('Позиций в статусе приёмки на полках нет.', false)
@@ -1604,7 +1674,6 @@
             <td>ячейка ${escHtml(r.foundCell)}</td>
             <td style="font-weight:700">Не отправлять на склад! Оставить в ячейке, провести приёмку.</td></tr>`).join('')));
 
-    // 4. Возвраты
     html += uzSection('ret', '🔴 Отменённые / Возвраты', report.canceledReturns.length, `${report.totalReturnUnits} шт`,
       report.canceledReturns.length === 0
         ? uzNone('Отменённых заказов на полках не обнаружено.', false)
@@ -1614,7 +1683,6 @@
             <td>ячейка ${escHtml(r.foundCell)}</td>
             <td style="font-weight:700">Снять с полки! Оформить отгрузку на возвратный склад.</td></tr>`).join('')));
 
-    // 5. Чужие
     html += uzSection('mut', '⛔ Чужие товары / не числятся', report.pureSurplus.length, `+${report.totalSurplusUnits} шт`,
       report.pureSurplus.length === 0
         ? uzNone('Чужих товаров на складе не обнаружено.', false)
@@ -1679,7 +1747,7 @@
 
     container.querySelectorAll('.u-download-past-btn').forEach(b => {
       b.onclick = () => {
-        const found = list.find(x => x.id === b.getAttribute('data-id'));
+        const found = getHistoryList().find(x => x.id === b.getAttribute('data-id'));
         if (found) {
           exportCleanXlsx(found.report, {
             date: found.date,
@@ -1708,6 +1776,5 @@
   window.__uzumState = state;
   injectUI();
 
-  // SPA-контроллер: возвращает кнопку в шапку, если приложение перерисовало DOM
   setInterval(injectUI, 2000);
 })();
