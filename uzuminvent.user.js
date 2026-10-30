@@ -16,7 +16,7 @@
   if (window.__uzumInvLoaded) return;
   window.__uzumInvLoaded = true;
 
-  const VERSION = '1.5.3';
+  const VERSION = '1.5.4';
   const API = 'https://api-wms.uzum.uz/de/delivery-point';
   const HISTORY_KEY = 'uzum_inventory_history';
   const jwtRegex = /eyJ[a-zA-Z0-9_-]{25,}\.eyJ[a-zA-Z0-9_-]{25,}\.[a-zA-Z0-9_-]{25,}/g;
