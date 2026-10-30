@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uzum Ревизор ПВЗ
 // @namespace    https://dp.uzum.uz/
-// @version      1.5.0
+// @version      1.5.3
 // @description  Ревизия склада ПВЗ Uzum Market: потоварная инвентаризация, приёмка, возвраты, пересорт, история и Excel-акт
 // @author       Хожиев Сухроб
 // @match        https://dp.uzum.uz/*
@@ -16,7 +16,7 @@
   if (window.__uzumInvLoaded) return;
   window.__uzumInvLoaded = true;
 
-  const VERSION = '1.5.0';
+  const VERSION = '1.5.3';
   const API = 'https://api-wms.uzum.uz/de/delivery-point';
   const HISTORY_KEY = 'uzum_inventory_history';
   const jwtRegex = /eyJ[a-zA-Z0-9_-]{25,}\.eyJ[a-zA-Z0-9_-]{25,}\.[a-zA-Z0-9_-]{25,}/g;
@@ -147,7 +147,7 @@
       // telegram
       tgTitle: '📦 Ревизия ПВЗ завершена',
       tgPvz: (p, k) => `ПВЗ: ${p} (ID: ${k})`,
-      tgDate: (d, t) => `Дата: ${d} ${t}`,
+      tgDate: (d, tm) => `Дата: ${d} ${tm}`,
       tgAuditor: a => `Ревизор: ${a}`,
       tgOrders: n => `Заказов: ${n}`,
       tgPlan: n => `План: ${n} шт`,
@@ -325,7 +325,7 @@
       noName: '—',
       tgTitle: '📦 PVZ inventarizatsiyasi yakunlandi',
       tgPvz: (p, k) => `PVZ: ${p} (ID: ${k})`,
-      tgDate: (d, t) => `Sana: ${d} ${t}`,
+      tgDate: (d, tm) => `Sana: ${d} ${tm}`,
       tgAuditor: a => `Inventarizatsiya o'tkazuvchi: ${a}`,
       tgOrders: n => `Buyurtmalar: ${n}`,
       tgPlan: n => `Reja: ${n} dona`,
@@ -390,18 +390,54 @@
 
   let LANG = 'ru';
 
-  function detectLocale() {
-    let v = '';
-    try {
-      v = sessionStorage.getItem('locale') || '';
-      if (!v) {
-        for (let i = 0; i < sessionStorage.length; i++) {
-          const k = sessionStorage.key(i);
-          if (k && /locale/i.test(k)) { v = sessionStorage.getItem(k) || ''; break; }
+  // ---------------------------------------------------------------- storage scan
+  // Barcha sessionStorage va localStorage yozuvlarini [{key, raw, parsed}] ko'rinishida qaytaradi
+  function readAllStorage() {
+    const out = [];
+    for (const s of [sessionStorage, localStorage]) {
+      try {
+        for (let i = 0; i < s.length; i++) {
+          const key = s.key(i);
+          const raw = s.getItem(key);
+          if (raw == null) continue;
+          let parsed;
+          try { parsed = JSON.parse(raw); } catch (e) { parsed = undefined; }
+          out.push({ key, raw, parsed });
         }
+      } catch (e) {}
+    }
+    return out;
+  }
+
+  // Obyekt ichidan kalitni chuqur qidiradi
+  function findDeep(obj, key, depth = 0) {
+    if (!obj || typeof obj !== 'object' || depth > 6) return undefined;
+    if (Object.prototype.hasOwnProperty.call(obj, key)) return obj[key];
+    for (const v of Object.values(obj)) {
+      const r = findDeep(v, key, depth + 1);
+      if (r !== undefined) return r;
+    }
+    return undefined;
+  }
+
+  function detectLocale() {
+    const items = readAllStorage();
+
+    // 1) kalit nomi aniq "locale" bo'lsa (oddiy matn qiymat)
+    const direct = items.find(i => i.key === 'locale');
+    if (direct && typeof direct.parsed !== 'object') {
+      const v = String(direct.parsed ?? direct.raw);
+      return /^uz/i.test(v) ? 'uz' : 'ru';
+    }
+
+    // 2) JSON ichida "locale" maydoni (masalan {"locale":"uz-UZ",...})
+    for (const i of items) {
+      const loc = findDeep(i.parsed, 'locale');
+      if (typeof loc === 'string' && loc) {
+        return /^uz/i.test(loc) ? 'uz' : 'ru';
       }
-    } catch (e) {}
-    return /uz/i.test(v) ? 'uz' : 'ru';
+    }
+    return 'ru';
   }
 
   function refreshLocale() { LANG = detectLocale(); }
@@ -420,22 +456,18 @@
   }
 
   function getAuditorName() {
-    const tryParse = (raw) => {
-      try { return JSON.parse(raw); } catch (e) { return null; }
-    };
-    let raw = null;
-    try {
-      raw = sessionStorage.getItem('userInfo');
-      if (!raw) {
-        for (let i = 0; i < sessionStorage.length; i++) {
-          const k = sessionStorage.key(i);
-          if (k && /user/i.test(k)) { raw = sessionStorage.getItem(k); break; }
-        }
+    const items = readAllStorage();
+    let info = null;
+
+    for (const i of items) {
+      const u = findDeep(i.parsed, 'userInfo');
+      if (u && typeof u === 'object' && (u.firstName || u.lastName)) {
+        info = u;
+        break;
       }
-    } catch (e) {}
-    const obj = raw ? tryParse(raw) : null;
-    const info = obj && (obj.userInfo || obj);
-    if (info && (info.firstName || info.lastName)) {
+    }
+
+    if (info) {
       return titleCase(`${info.firstName || ''} ${info.lastName || ''}`.trim());
     }
     return t('unknown');
@@ -488,7 +520,7 @@
       const pinia = appEl?.__vue_app__?.config?.globalProperties?.$pinia;
       if (pinia) {
         const matches = JSON.stringify(pinia.state.value).match(jwtRegex);
-        if (matches) for (const t of matches) if (isTokenValid(t)) return t;
+        if (matches) for (const tk of matches) if (isTokenValid(tk)) return tk;
       }
     } catch (e) {}
 
@@ -496,7 +528,7 @@
       try {
         for (let i = 0; i < s.length; i++) {
           const matches = s.getItem(s.key(i))?.match(jwtRegex);
-          if (matches) for (const t of matches) if (isTokenValid(t)) return t;
+          if (matches) for (const tk of matches) if (isTokenValid(tk)) return tk;
         }
       } catch (e) {}
     }
@@ -567,14 +599,17 @@
       try {
         const res = await fetch(url, { headers, signal: ctrl.signal });
         clearTimeout(timer);
-        if (res.status === 401 || res.status === 403) throw new Error(t('errNoAccess', res.status));
+        if (res.status === 401 || res.status === 403) {
+          const err = new Error(t('errNoAccess', res.status));
+          err.isAccessError = true;
+          throw err;
+        }
         if (!res.ok) throw new Error(t('errApi', res.status));
         return await res.json();
       } catch (e) {
         clearTimeout(timer);
         lastErr = e;
         if (e && e.isAccessError) throw e;
-        if (/Нет доступа|WMS API ga kirish/.test(e.message)) { e.isAccessError = true; throw e; }
       }
     }
     throw lastErr;
@@ -1457,7 +1492,7 @@
     } else {
       rows.push(t('xHdrS1'));
       report.pureShortages.forEach((r, idx) => {
-        rows.push([idx + 1, r.pid || r.orderId, r.orderId, r.sku, `-${r.missingCount} ${t('pcs', '').trim()}`, r.expectedCell || 'БЕЗ_ЯЧЕЙКИ', t('xNotFound'), fullName(r.customer), r.customer?.phone || t('noName')]);
+        rows.push([idx + 1, r.pid || r.orderId, r.orderId, r.sku, `-${t('pcs', r.missingCount)}`, r.expectedCell || 'БЕЗ_ЯЧЕЙКИ', t('xNotFound'), fullName(r.customer), r.customer?.phone || t('noName')]);
       });
     }
     rows.push([]);
@@ -1748,7 +1783,7 @@
     return isModalOpen() && state.screen === 'scan';
   }
 
-  // Статический текст в модалке обновляется при каждом открытии (по локали)
+  // Статический текст обновляется по текущей локали
   function applyStaticTexts() {
     const set = (id, txt) => { const el = $(id); if (el) el.textContent = txt; };
     set('u-app-name', t('appName'));
@@ -1935,7 +1970,9 @@
       btn.id = 'uzum-inv-btn';
       btn.onclick = openModal;
     }
-    btn.innerHTML = '📦 ' + (I18N.ru.appName);
+    // Надпись кнопки — по текущей локали
+    const label = '📦 ' + I18N[LANG === 'uz' ? 'uz' : 'ru'].appName;
+    if (btn.textContent !== label) btn.textContent = label;
 
     if (btn.isConnected && btn.dataset.mode === 'header') return;
     if (btn.isConnected && btn.dataset.mode === 'fallback') {
@@ -1956,6 +1993,7 @@
   }
 
   function injectUI() {
+    refreshLocale();
     ensureModal();
     ensureButton();
   }
