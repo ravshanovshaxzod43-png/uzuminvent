@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uzum Ревизор ПВЗ
 // @namespace    https://dp.uzum.uz/
-// @version      1.4.0
+// @version      1.5.0
 // @description  Ревизия склада ПВЗ Uzum Market: потоварная инвентаризация, приёмка, возвраты, пересорт, история и Excel-акт
 // @author       Хожиев Сухроб
 // @match        https://dp.uzum.uz/*
@@ -16,19 +16,430 @@
   if (window.__uzumInvLoaded) return;
   window.__uzumInvLoaded = true;
 
-  const VERSION = '1.4.0';
+  const VERSION = '1.5.0';
   const API = 'https://api-wms.uzum.uz/de/delivery-point';
   const HISTORY_KEY = 'uzum_inventory_history';
-  const AUDITOR_NAME = 'Хожиев Сухроб';
   const jwtRegex = /eyJ[a-zA-Z0-9_-]{25,}\.eyJ[a-zA-Z0-9_-]{25,}\.[a-zA-Z0-9_-]{25,}/g;
 
-  // ---------------------------------------------------------------- telegram (фоновая отправка)
-  // Токен и chat_id — ВАЖНО: скрипт виден всем, у кого есть доступ к нему.
+  // ---------------------------------------------------------------- telegram
+  // Токен и chat_id — скрипт виден всем, у кого есть доступ к нему.
   const TG = {
     enabled: true,
-    token: '8864424187:AAEbTr376ReLM5ucMYDZJqS9CIYav65q7U0',
-    chatId: '2120794630'
+    token: 'PUT_BOT_TOKEN_HERE',
+    chatId: 'PUT_CHAT_ID_HERE'
   };
+
+  // ---------------------------------------------------------------- i18n
+  const I18N = {
+    ru: {
+      appName: 'Ревизор ПВЗ',
+      subtitle: 'Приёмка · Возвраты · Пересорт · История ревизий',
+      tabNew: '📋 Новая ревизия',
+      tabHistory: '🗄️ История ревизий',
+      close: 'Закрыть',
+      paramsTitle: 'Параметры ревизии',
+      pvz: 'ПВЗ',
+      dpKeyLabel: 'ID (dpKey)',
+      ordersToIssue: n => `Заказов к выдаче: ${n}`,
+      ordersToIssueEmpty: 'Заказов к выдаче: —',
+      loadBtn: 'Выгрузить остатки и начать',
+      statOrders: 'Заказов к выдаче',
+      statPlan: 'Товаров по плану',
+      statScanned: 'Отсканировано',
+      barLabel: (f, t, p) => `Найдено ${f} из ${t} шт · ${p}%`,
+      cellActive: 'Активная ячейка',
+      cellPlaceholder: 'Отсканируйте ячейку',
+      lastBarcode: 'Последний штрихкод',
+      hintNeedCell: 'Сначала отсканируйте штрихкод ячейки',
+      hintScanItems: 'Сканируйте товары на этой полке',
+      scanPlaceholder: 'Сканер активен — направьте луч на штрихкод',
+      undo: '↩️ Отменить скан',
+      cellItems: 'Учтено в текущей ячейке',
+      finish: 'Итоги ревизии →',
+      emptyCell: 'Ячейка пуста. Сканируйте заказы на этой полке.',
+      colOrderBarcode: 'Заказ / Штрихкод',
+      colQty: 'Количество',
+      badgeAcc: 'В ПРИЁМКЕ',
+      badgeRet: 'ОТМЕНЁН / ВОЗВРАТ',
+      badgeForeign: 'ЧУЖОЙ ПВЗ',
+      orderLabel: n => `Заказ №${n}`,
+      pcs: n => `${n} шт`,
+      cellWord: 'ячейка',
+      msgNeedCell: '⚠️ Сначала отсканируйте штрихкод ячейки (полки)!',
+      msgAlreadyFull: pid => `ℹ️ Заказ №${pid} уже учтен полностью.`,
+      msgAccepted: (pid, name) => `✓ Заказ №${pid} (${name}) принят.`,
+      msgSearching: '🔍 Проверка статуса в WMS...',
+      msgAcceptanceHint: '⚠️ В ПРИЁМКЕ (Заказ не завершен). Оставить в ячейке! Завершить приёмку в WMS.',
+      msgAcceptanceDup: 'ℹ️ Эта позиция приёмки уже учтена.',
+      msgReturnHint: '🔴 ОТМЕНЕН / ВОЗВРАТ! Срочно убрать с полки и отправить на склад.',
+      msgReturnDup: 'ℹ️ Эта позиция возврата уже учтена.',
+      msgForeignHint: '⛔ Чужой товар/посылка! Не числится на этом ПВЗ. Отложить в возврат!',
+      msgUndone: code => `↩️ Скан "${code}" успешно отменен.`,
+      statusAcceptance: 'Размещен / В приёмке',
+      statusReturn: 'Завершен (К возврату)',
+      statusAcceptanceShort: 'В приёмке',
+      errNoToken: "Токен не найден. Обновите вкладку 'Заказы' (F5) и повторите.",
+      errNoAccess: s => `Нет доступа к WMS API (${s}). Обновите страницу (F5) и повторите.`,
+      errApi: s => `Ошибка WMS API (${s}).`,
+      errNoDpKey: 'ID ПВЗ не указан. Введите ID точки (dpKey) вручную.',
+      loadAuth: 'Авторизация в WMS...',
+      loadList: k => `Выгрузка реестра заказов (dpKey: ${k})...`,
+      loadCollected: n => `Собрано заказов к выдаче: ${n}...`,
+      loadItems: (a, b) => `Загрузка состава товаров: ${a} из ${b}`,
+      confirmFailed: n => `Не удалось загрузить состав ${n} заказов (для них план принят как 1 шт).\nПродолжить ревизию?`,
+      errLoadCancelled: 'Загрузка отменена. Повторите попытку.',
+      alreadySaved: 'Эта ревизия уже сохранена. Для новой ревизии загрузите остатки заново.',
+      savedOk: pvz => `✓ Ревизия филиала ${pvz} успешно зафиксирована и сохранена в базу!\nАкт доступен во вкладке "История ревизий".`,
+      saveFail: '⚠️ Не удалось сохранить ревизию в базу браузера (нет места). Акт .xlsx будет скачан.',
+      confirmDelete: 'Удалить эту ревизию из базы?',
+      histEmpty: 'В базе пока нет сохранённых ревизий. После проверки нажмите «Завершить целиком».',
+      histNotFound: 'Ничего не найдено.',
+      histTitle: 'Архив ревизий',
+      histSearch: '🔍 Поиск по заказу (PID) или штрихкоду',
+      chipOrders: n => `Заказов ${n}`,
+      chipPlan: n => `План ${n}`,
+      chipFact: n => `Факт ${n}`,
+      chipShort: n => `Недостач ${n}`,
+      chipMis: n => `Пересорт ${n}`,
+      chipAcc: n => `Приёмка ${n}`,
+      chipRet: n => `Возвраты ${n}`,
+      btnXlsx: '📥 .xlsx',
+      deleteTitle: 'Удалить из базы',
+      reportTitle: pvz => `Итоги ревизии · ${pvz}`,
+      reportMeta: (o, p, s) => `Заказов: <b>${o}</b> · По плану: <b>${p} шт</b> · Отсканировано: <b>${s} шт</b>`,
+      btnSave: '💾 Завершить целиком',
+      btnExcel: '📊 Скачать .xlsx',
+      btnBack: '← Вернуться',
+      tileShort: 'Недостачи',
+      tileMis: 'Пересорт',
+      tileAcc: 'В приёмке',
+      tileRet: 'Возвраты',
+      tileSur: 'Чужие',
+      secShort: '🔴 Недостачи',
+      secMis: '🟡 Пересорт ячеек',
+      secAcc: '⚠️ В приёмке (не приняты полностью)',
+      secRet: '🔴 Отменённые / Возвраты',
+      secSur: '⛔ Чужие товары / не числятся',
+      pos: n => `${n} поз.`,
+      noShort: '✓ Недостач не обнаружено. Все клиентские заказы на месте!',
+      noMis: '✓ Все заказы лежат строго на своих местах.',
+      noAcc: 'Позиций в статусе приёмки на полках нет.',
+      noRet: 'Отменённых заказов на полках не обнаружено.',
+      noSur: 'Чужих товаров на складе не обнаружено.',
+      thPid: 'Заказ (PID)',
+      thMissing: 'Не хватает',
+      thShelf: 'Полка',
+      thClient: 'Клиент',
+      thQty: 'Кол-во',
+      thPlanCell: 'По плану',
+      thActualCell: 'Лежит фактически',
+      thBarcodeLoc: 'ШК / Грузоместо',
+      thRec: 'Рекомендация',
+      thBarcode: 'Штрихкод',
+      thExtra: 'Лишнее кол-во',
+      thFoundAt: 'Где найден',
+      recAcc: 'Не отправлять на склад! Оставить в ячейке, провести приёмку.',
+      recRet: 'Снять с полки! Оформить отгрузку на возвратный склад.',
+      cellPrefix: 'ячейка ',
+      unknown: 'Не определён',
+      mgrName: 'Хожиев Сухроб',
+      noName: '—',
+      // telegram
+      tgTitle: '📦 Ревизия ПВЗ завершена',
+      tgPvz: (p, k) => `ПВЗ: ${p} (ID: ${k})`,
+      tgDate: (d, t) => `Дата: ${d} ${t}`,
+      tgAuditor: a => `Ревизор: ${a}`,
+      tgOrders: n => `Заказов: ${n}`,
+      tgPlan: n => `План: ${n} шт`,
+      tgFact: n => `Факт: ${n} шт`,
+      tgShort: (c, u) => `🔴 Недостачи: ${c} поз. (-${u} шт)`,
+      tgMis: (c, u) => `🟡 Пересорт: ${c} поз. (${u} шт)`,
+      tgAcc: (c, u) => `⚠️ В приёмке: ${c} поз. (${u} шт)`,
+      tgRet: (c, u) => `🔴 Возвраты: ${c} поз. (${u} шт)`,
+      tgSur: (c, u) => `⛔ Чужие: ${c} поз. (+${u} шт)`,
+      // xlsx
+      sheetName: 'Акт ревизии',
+      xTitle: 'АКТ ИНВЕНТАРИЗАЦИИ СКЛАДА ПВЗ',
+      xPvz: 'Пункт выдачи:',
+      xDate: 'Дата и время:',
+      xMgr: 'Территориальный управляющий:',
+      xAuditor: 'Ревизор:',
+      xStatus: 'Статус проверки:',
+      xStatusDone: 'Завершена целиком (Сохранено в базу)',
+      xSummary: '=== ИТОГОВАЯ СВОДКА РЕВИЗИИ ===',
+      xHdrInd: 'Показатель',
+      xHdrQty: 'Количество',
+      xHdrStatus: 'Статус',
+      xSumOrders: 'Всего клиентских заказов в плане WMS:',
+      xSumPlan: 'Товаров по плану:',
+      xSumScanned: 'Всего отсканировано товаров:',
+      xSumShort: '🔴 Чистая недостача (не найдены на складе):',
+      xSumMis: '🟡 Пересорт ячеек (лежат не на своих полках):',
+      xSumAcc: '⚠️ Заказы в приёмке (не приняты полностью):',
+      xSumRet: '🔴 Отмененные / Возвраты (к отгрузке на склад):',
+      xSumSur: '⛔ Чужие товары (не числятся за ПВЗ):',
+      xStPlanToIssue: 'План к выдаче',
+      xStPlanPcs: 'План штук',
+      xStFact: 'Факт на складе',
+      xStShort: n => `Не хватает: -${n} шт`,
+      xStMis: n => `${n} шт требуют перемещения`,
+      xStAcc: n => `${n} шт (Оставить в ячейке, провести приемку)`,
+      xStRet: n => `${n} шт (Срочно снять с полки на склад)`,
+      xStSur: n => `+${n} шт в коробку возвратов`,
+      xS1: '🔴 РАЗДЕЛ 1. НЕДОСТАЧИ (ЗАКАЗЫ, КОТОРЫХ НЕТ НА СКЛАДЕ)',
+      xS2: '🟡 РАЗДЕЛ 2. ПЕРЕСОРТ ЯЧЕЕК (ТОВАР НА СКЛАДЕ, НО НЕ НА СВОЕЙ ПОЛКЕ)',
+      xS3: '⚠️ РАЗДЕЛ 3. ТОВАРЫ В ПРИЁМКЕ (НЕ ПРИНЯТЫ ПОЛНОСТЬЮ — НЕ ОТПРАВЛЯТЬ НА СКЛАД!)',
+      xS4: '🔴 РАЗДЕЛ 4. ОТМЕНЕННЫЕ ЗАКАЗЫ И ВОЗВРАТЫ (СРОЧНО УБРАТЬ С ПОЛКИ И ОТПРАВИТЬ НА СКЛАД)',
+      xS5: '⛔ РАЗДЕЛ 5. ЧУЖИЕ ТОВАРЫ И НЕОПОЗНАННЫЕ ИЗЛИШКИ',
+      xOkShort: '✓ Недостач не обнаружено. Все клиентские заказы на месте!',
+      xOkMis: '✓ Все найденные заказы лежат строго на своих местах.',
+      xOkAcc: '✓ Товаров в статусе незавершенной приёмки не обнаружено.',
+      xOkRet: '✓ Забытых отмененных заказов или возвратов на полках не обнаружено.',
+      xOkSur: '✓ Лишних или чужих посылок на складе не обнаружено.',
+      xHdrS1: ['№', 'Номер заказа (PID)', 'ID в WMS', 'Штрихкод (SKU / Место)', 'Не хватает', 'Полка по плану', 'Где найден', 'Клиент', 'Телефон'],
+      xHdrS2: ['№', 'Номер заказа (PID)', 'ID в WMS', 'Штрихкод (SKU / Место)', 'Кол-во', 'Полка по плану', 'Где лежит по факту', 'Клиент', 'Действие'],
+      xHdrS3: ['№', 'Считанный ШК / Место', 'ID заказа', 'Кол-во', 'Полка', 'Статус в WMS', '', '', 'Рекомендуемое действие'],
+      xHdrS5: ['№', 'Считанный ШК / Место', 'Количество', 'Где найден (Полка)', 'Статус', '', '', '', 'Рекомендуемое действие'],
+      xNotFound: 'НЕ НАЙДЕН',
+      xActS2: n => `Переложить в ячейку ${n}`,
+      xActS3: 'Оставить в ячейке! Завершить приёмку в WMS',
+      xActS4: 'Снять с полки! Оформить отгрузку на возвратный склад',
+      xActS5: 'Отложить в коробку возвратов',
+      xStatusRetShort: 'Завершен (Отгрузка)',
+      xForeignStatus: 'Чужой ПВЗ / Не числится',
+      xSaved: 'Сохранено в базу'
+    },
+
+    uz: {
+      appName: 'PVZ inventarizatsiya',
+      subtitle: 'Qabul · Qaytarish · Noto\'g\'ri joy · Inventarizatsiyalar tarixi',
+      tabNew: '📋 Yangi inventarizatsiya',
+      tabHistory: '🗄️ Inventarizatsiyalar tarixi',
+      close: 'Yopish',
+      paramsTitle: 'Inventarizatsiya parametrlari',
+      pvz: 'PVZ',
+      dpKeyLabel: 'ID (dpKey)',
+      ordersToIssue: n => `Berishga buyurtmalar: ${n}`,
+      ordersToIssueEmpty: 'Berishga buyurtmalar: —',
+      loadBtn: 'Qoldiqlarni yuklab boshlash',
+      statOrders: 'Berishga buyurtmalar',
+      statPlan: 'Reja bo\'yicha mahsulotlar',
+      statScanned: 'Skanerlangan',
+      barLabel: (f, t, p) => `Topildi ${f} / ${t} dona · ${p}%`,
+      cellActive: 'Faol katak',
+      cellPlaceholder: 'Katakni skanerlang',
+      lastBarcode: 'Oxirgi shtrixkod',
+      hintNeedCell: 'Avval katak shtrixkodini skanerlang',
+      hintScanItems: 'Ushbu javondagi mahsulotlarni skanerlang',
+      scanPlaceholder: 'Skaner faol — shtrixkodga nurni yo\'naltiring',
+      undo: '↩️ Skanni bekor qilish',
+      cellItems: 'Joriy katakda hisobga olingan',
+      finish: 'Inventarizatsiya natijalari →',
+      emptyCell: 'Katak bo\'sh. Ushbu javondagi buyurtmalarni skanerlang.',
+      colOrderBarcode: 'Buyurtma / Shtrixkod',
+      colQty: 'Miqdor',
+      badgeAcc: 'QABULDA',
+      badgeRet: 'BEKOR QILINGAN / QAYTARISH',
+      badgeForeign: 'BOSHQA PVZ',
+      orderLabel: n => `Buyurtma №${n}`,
+      pcs: n => `${n} dona`,
+      cellWord: 'katak',
+      msgNeedCell: '⚠️ Avval katak (javon) shtrixkodini skanerlang!',
+      msgAlreadyFull: pid => `ℹ️ Buyurtma №${pid} to'liq hisobga olingan.`,
+      msgAccepted: (pid, name) => `✓ Buyurtma №${pid} (${name}) qabul qilindi.`,
+      msgSearching: '🔍 WMS da holat tekshirilmoqda...',
+      msgAcceptanceHint: '⚠️ QABULDA (buyurtma yakunlanmagan). Katakda qoldiring! WMS da qabulni yakunlang.',
+      msgAcceptanceDup: 'ℹ️ Bu qabul pozitsiyasi allaqachon hisobga olingan.',
+      msgReturnHint: '🔴 BEKOR QILINGAN / QAYTARISH! Zudlik bilan javondan olib, omborga yuboring.',
+      msgReturnDup: 'ℹ️ Bu qaytarish pozitsiyasi allaqachon hisobga olingan.',
+      msgForeignHint: '⛔ Boshqa mahsulot/jo\'natma! Ushbu PVZ ga tegishli emas. Qaytarishga ajratib qo\'ying!',
+      msgUndone: code => `↩️ "${code}" skani muvaffaqiyatli bekor qilindi.`,
+      statusAcceptance: 'Joylashtirilgan / Qabulda',
+      statusReturn: 'Yakunlangan (Qaytarishga)',
+      statusAcceptanceShort: 'Qabulda',
+      errNoToken: 'Token topilmadi. "Buyurtmalar" yorlig\'ini yangilang (F5) va qaytadan urining.',
+      errNoAccess: s => `WMS API ga kirish yo'q (${s}). Sahifani yangilang (F5) va qaytadan urining.`,
+      errApi: s => `WMS API xatosi (${s}).`,
+      errNoDpKey: 'PVZ ID kiritilmagan. Nuqta ID sini (dpKey) qo\'lda kiriting.',
+      loadAuth: 'WMS ga avtorizatsiya...',
+      loadList: k => `Buyurtmalar reestri yuklanmoqda (dpKey: ${k})...`,
+      loadCollected: n => `Berishga yig'ilgan buyurtmalar: ${n}...`,
+      loadItems: (a, b) => `Mahsulotlar tarkibi yuklanmoqda: ${a} / ${b}`,
+      confirmFailed: n => `${n} ta buyurtma tarkibini yuklab bo'lmadi (ular uchun reja 1 dona deb olindi).\nInventarizatsiyani davom ettirasizmi?`,
+      errLoadCancelled: 'Yuklash bekor qilindi. Qaytadan urining.',
+      alreadySaved: 'Bu inventarizatsiya allaqachon saqlangan. Yangi inventarizatsiya uchun qoldiqlarni qaytadan yuklang.',
+      savedOk: pvz => `✓ ${pvz} filiali inventarizatsiyasi muvaffaqiyatli qayd etildi va bazaga saqlandi!\nAkt "Inventarizatsiyalar tarixi" yorlig'ida mavjud.`,
+      saveFail: '⚠️ Inventarizatsiyani brauzer bazasiga saqlab bo\'lmadi (joy yetarli emas). .xlsx akt yuklab olinadi.',
+      confirmDelete: 'Bu inventarizatsiyani bazadan o\'chirasizmi?',
+      histEmpty: 'Bazada hali saqlangan inventarizatsiyalar yo\'q. Tekshiruvdan keyin «Butunlay yakunlash» tugmasini bosing.',
+      histNotFound: 'Hech narsa topilmadi.',
+      histTitle: 'Inventarizatsiyalar arxivi',
+      histSearch: '🔍 Buyurtma (PID) yoki shtrixkod bo\'yicha qidiruv',
+      chipOrders: n => `Buyurtmalar ${n}`,
+      chipPlan: n => `Reja ${n}`,
+      chipFact: n => `Fakt ${n}`,
+      chipShort: n => `Kamomad ${n}`,
+      chipMis: n => `Noto'g'ri joy ${n}`,
+      chipAcc: n => `Qabul ${n}`,
+      chipRet: n => `Qaytarish ${n}`,
+      btnXlsx: '📥 .xlsx',
+      deleteTitle: 'Bazadan o\'chirish',
+      reportTitle: pvz => `Inventarizatsiya natijalari · ${pvz}`,
+      reportMeta: (o, p, s) => `Buyurtmalar: <b>${o}</b> · Reja bo'yicha: <b>${p} dona</b> · Skanerlangan: <b>${s} dona</b>`,
+      btnSave: '💾 Butunlay yakunlash',
+      btnExcel: '📊 .xlsx yuklash',
+      btnBack: '← Orqaga',
+      tileShort: 'Kamomad',
+      tileMis: 'Noto\'g\'ri joy',
+      tileAcc: 'Qabulda',
+      tileRet: 'Qaytarish',
+      tileSur: 'Begona',
+      secShort: '🔴 Kamomad',
+      secMis: '🟡 Noto\'g\'ri katakdagi buyurtmalar',
+      secAcc: '⚠️ Qabulda (to\'liq qabul qilinmagan)',
+      secRet: '🔴 Bekor qilingan / Qaytarishlar',
+      secSur: '⛔ Begona mahsulotlar / ro\'yxatda yo\'q',
+      pos: n => `${n} poz.`,
+      noShort: '✓ Kamomad aniqlanmadi. Barcha mijoz buyurtmalari joyida!',
+      noMis: '✓ Barcha buyurtmalar o\'z javonlarida.',
+      noAcc: 'Javonlarda qabul holatidagi pozitsiyalar yo\'q.',
+      noRet: 'Javonlarda bekor qilingan buyurtmalar topilmadi.',
+      noSur: 'Omborda begona mahsulotlar topilmadi.',
+      thPid: 'Buyurtma (PID)',
+      thMissing: 'Yetishmaydi',
+      thShelf: 'Javon',
+      thClient: 'Mijoz',
+      thQty: 'Miqdor',
+      thPlanCell: 'Reja bo\'yicha',
+      thActualCell: 'Haqiqatda turibdi',
+      thBarcodeLoc: 'Shtrixkod / Joy',
+      thRec: 'Tavsiya',
+      thBarcode: 'Shtrixkod',
+      thExtra: 'Ortiqcha miqdor',
+      thFoundAt: 'Qayerda topildi',
+      recAcc: 'Omborga yubormang! Katakda qoldiring, qabulni o\'tkazing.',
+      recRet: 'Javondan oling! Qaytarish omboriga jo\'nating.',
+      cellPrefix: 'katak ',
+      unknown: 'Noma\'lum',
+      mgrName: 'Xojiyev Suxrob',
+      noName: '—',
+      tgTitle: '📦 PVZ inventarizatsiyasi yakunlandi',
+      tgPvz: (p, k) => `PVZ: ${p} (ID: ${k})`,
+      tgDate: (d, t) => `Sana: ${d} ${t}`,
+      tgAuditor: a => `Inventarizatsiya o'tkazuvchi: ${a}`,
+      tgOrders: n => `Buyurtmalar: ${n}`,
+      tgPlan: n => `Reja: ${n} dona`,
+      tgFact: n => `Fakt: ${n} dona`,
+      tgShort: (c, u) => `🔴 Kamomad: ${c} poz. (-${u} dona)`,
+      tgMis: (c, u) => `🟡 Noto'g'ri joy: ${c} poz. (${u} dona)`,
+      tgAcc: (c, u) => `⚠️ Qabulda: ${c} poz. (${u} dona)`,
+      tgRet: (c, u) => `🔴 Qaytarishlar: ${c} poz. (${u} dona)`,
+      tgSur: (c, u) => `⛔ Begona: ${c} poz. (+${u} dona)`,
+      sheetName: 'Inventarizatsiya akti',
+      xTitle: 'PVZ OMBOR INVENTARIZATSIYA AKTI',
+      xPvz: 'Berish punkti:',
+      xDate: 'Sana va vaqt:',
+      xMgr: 'Hududiy boshqaruvchi:',
+      xAuditor: 'Inventarizatsiya o\'tkazuvchi:',
+      xStatus: 'Tekshiruv holati:',
+      xStatusDone: 'To\'liq yakunlangan (bazaga saqlangan)',
+      xSummary: '=== INVENTARIZATSIYA UMUMIY NATIJASI ===',
+      xHdrInd: 'Ko\'rsatkich',
+      xHdrQty: 'Miqdor',
+      xHdrStatus: 'Holat',
+      xSumOrders: 'WMS rejasidagi mijoz buyurtmalari:',
+      xSumPlan: 'Reja bo\'yicha mahsulotlar:',
+      xSumScanned: 'Jami skanerlangan mahsulotlar:',
+      xSumShort: '🔴 Sof kamomad (omborda topilmadi):',
+      xSumMis: '🟡 Noto\'g\'ri katak (boshqa javonda turibdi):',
+      xSumAcc: '⚠️ Qabuldagi buyurtmalar (to\'liq qabul qilinmagan):',
+      xSumRet: '🔴 Bekor qilingan / Qaytarishlar (omborga jo\'natish):',
+      xSumSur: '⛔ Begona mahsulotlar (PVZ ga tegishli emas):',
+      xStPlanToIssue: 'Berish rejasi',
+      xStPlanPcs: 'Reja donalari',
+      xStFact: 'Ombordagi fakt',
+      xStShort: n => `Yetishmaydi: -${n} dona`,
+      xStMis: n => `${n} dona joyini o'zgartirish kerak`,
+      xStAcc: n => `${n} dona (katakda qoldiring, qabulni o'tkazing)`,
+      xStRet: n => `${n} dona (zudlik bilan javondan olib omborga)`,
+      xStSur: n => `+${n} dona qaytarish qutisiga`,
+      xS1: '🔴 BO\'LIM 1. KAMOMAD (OMBORDA YO\'Q BUYURTMALAR)',
+      xS2: '🟡 BO\'LIM 2. KATAKLAR ALMASHUVI (OMBORDA, LEKIN BOSHQA JAVONDA)',
+      xS3: '⚠️ BO\'LIM 3. QABULDAGI MAHSULOTLAR (TO\'LIQ QABUL QILINMAGAN — OMBORGA YUBORMANG!)',
+      xS4: '🔴 BO\'LIM 4. BEKOR QILINGAN BUYURTMALAR VA QAYTARISHLAR (ZUDLIK BILAN JAVONDAN OLING)',
+      xS5: '⛔ BO\'LIM 5. BEGONA MAHSULOTLAR VA ANIQLANMAGAN ORTIQCHALAR',
+      xOkShort: '✓ Kamomad aniqlanmadi. Barcha mijoz buyurtmalari joyida!',
+      xOkMis: '✓ Topilgan buyurtmalar barchasi o\'z joyida.',
+      xOkAcc: '✓ Tugallanmagan qabul holatidagi mahsulotlar topilmadi.',
+      xOkRet: '✓ Javonlarda unutilgan bekor qilingan buyurtma yoki qaytarish topilmadi.',
+      xOkSur: '✓ Omborda ortiqcha yoki begona jo\'natmalar topilmadi.',
+      xHdrS1: ['№', 'Buyurtma raqami (PID)', 'WMS ID', 'Shtrixkod (SKU / Joy)', 'Yetishmaydi', 'Reja bo\'yicha javon', 'Qayerda topildi', 'Mijoz', 'Telefon'],
+      xHdrS2: ['№', 'Buyurtma raqami (PID)', 'WMS ID', 'Shtrixkod (SKU / Joy)', 'Miqdor', 'Reja bo\'yicha javon', 'Haqiqatda qayerda', 'Mijoz', 'Harakat'],
+      xHdrS3: ['№', 'O\'qilgan shtrixkod / Joy', 'Buyurtma ID', 'Miqdor', 'Javon', 'WMS holati', '', '', 'Tavsiya etilgan harakat'],
+      xHdrS5: ['№', 'O\'qilgan shtrixkod / Joy', 'Miqdor', 'Qayerda topildi (javon)', 'Holat', '', '', '', 'Tavsiya etilgan harakat'],
+      xNotFound: 'TOPILMADI',
+      xActS2: n => `${n} katakka o'tkazish`,
+      xActS3: 'Katakda qoldiring! WMS da qabulni yakunlang',
+      xActS4: 'Javondan oling! Qaytarish omboriga jo\'nating',
+      xActS5: 'Qaytarish qutisiga ajratib qo\'ying',
+      xStatusRetShort: 'Yakunlangan (jo\'natma)',
+      xForeignStatus: 'Boshqa PVZ / ro\'yxatda yo\'q',
+      xSaved: 'Bazaga saqlangan'
+    }
+  };
+
+  let LANG = 'ru';
+
+  function detectLocale() {
+    let v = '';
+    try {
+      v = sessionStorage.getItem('locale') || '';
+      if (!v) {
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const k = sessionStorage.key(i);
+          if (k && /locale/i.test(k)) { v = sessionStorage.getItem(k) || ''; break; }
+        }
+      }
+    } catch (e) {}
+    return /uz/i.test(v) ? 'uz' : 'ru';
+  }
+
+  function refreshLocale() { LANG = detectLocale(); }
+
+  function t(key, ...args) {
+    const dict = I18N[LANG] || I18N.ru;
+    let v = dict[key];
+    if (v === undefined) v = I18N.ru[key];
+    if (v === undefined) return key;
+    return typeof v === 'function' ? v(...args) : v;
+  }
+
+  // ---------------------------------------------------------------- user (ревизор)
+  function titleCase(s) {
+    return String(s || '').toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (m, p, c) => p + c.toUpperCase());
+  }
+
+  function getAuditorName() {
+    const tryParse = (raw) => {
+      try { return JSON.parse(raw); } catch (e) { return null; }
+    };
+    let raw = null;
+    try {
+      raw = sessionStorage.getItem('userInfo');
+      if (!raw) {
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const k = sessionStorage.key(i);
+          if (k && /user/i.test(k)) { raw = sessionStorage.getItem(k); break; }
+        }
+      }
+    } catch (e) {}
+    const obj = raw ? tryParse(raw) : null;
+    const info = obj && (obj.userInfo || obj);
+    if (info && (info.firstName || info.lastName)) {
+      return titleCase(`${info.firstName || ''} ${info.lastName || ''}`.trim());
+    }
+    return t('unknown');
+  }
 
   // ---------------------------------------------------------------- utils
   function escHtml(v) {
@@ -118,7 +529,6 @@
     } catch (e) { return null; }
   }
 
-  // перехват fetch
   if (!window.__fetchPatched) {
     const origFetch = window.fetch;
     window.fetch = function (...args) {
@@ -135,7 +545,6 @@
     window.__fetchPatched = true;
   }
 
-  // перехват XMLHttpRequest (axios и др.)
   if (!window.__xhrPatched) {
     const oOpen = XMLHttpRequest.prototype.open;
     const oSet = XMLHttpRequest.prototype.setRequestHeader;
@@ -158,13 +567,14 @@
       try {
         const res = await fetch(url, { headers, signal: ctrl.signal });
         clearTimeout(timer);
-        if (res.status === 401 || res.status === 403) throw new Error(`Нет доступа к WMS API (${res.status}). Обновите страницу (F5) и повторите.`);
-        if (!res.ok) throw new Error(`Ошибка WMS API (${res.status}).`);
+        if (res.status === 401 || res.status === 403) throw new Error(t('errNoAccess', res.status));
+        if (!res.ok) throw new Error(t('errApi', res.status));
         return await res.json();
       } catch (e) {
         clearTimeout(timer);
         lastErr = e;
-        if (/Нет доступа/.test(e.message)) throw e;
+        if (e && e.isAccessError) throw e;
+        if (/Нет доступа|WMS API ga kirish/.test(e.message)) { e.isAccessError = true; throw e; }
       }
     }
     throw lastErr;
@@ -172,7 +582,7 @@
 
   function authHeaders() {
     const token = findTokenAnywhere();
-    if (!token) throw new Error("Токен не найден. Обновите вкладку 'Заказы' (F5) и повторите.");
+    if (!token) throw new Error(t('errNoToken'));
     return { 'accept': 'application/json', 'authorization': `Bearer ${token}` };
   }
 
@@ -274,11 +684,11 @@
       osc.frequency.value = freq;
       osc.connect(gain);
       gain.connect(audioCtx.destination);
-      const t = audioCtx.currentTime;
-      gain.gain.setValueAtTime(0.3, t);
-      gain.gain.exponentialRampToValueAtTime(0.00001, t + duration);
-      osc.start(t);
-      osc.stop(t + duration);
+      const t0 = audioCtx.currentTime;
+      gain.gain.setValueAtTime(0.3, t0);
+      gain.gain.exponentialRampToValueAtTime(0.00001, t0 + duration);
+      osc.start(t0);
+      osc.stop(t0 + duration);
     } catch (e) {}
   }
 
@@ -317,7 +727,7 @@
     screen: 'start',
     workScreen: 'start',
     lastReport: null,
-    savedInSession: false   // защита от двойного сохранения одной и той же ревизии
+    savedInSession: false
   };
 
   function resetInventoryState() {
@@ -365,18 +775,15 @@
       try {
         const data = await fetchJson(url, headers, 8000, 0);
         const str = JSON.stringify(data).toLowerCase();
-
-        // ответ обязан содержать сам отсканированный код
         if (!str.includes(needle)) continue;
 
         if (str.includes('приемк') || str.includes('acceptance') || str.includes('к размещению') || str.includes('размещен')) {
           const rawObj = Array.isArray(data) ? data[0] : (data.acceptance?.[0] || data.content?.[0] || data);
           result = {
             type: 'ACCEPTANCE',
-            label: 'В приёмке (Не принят полностью)',
             orderId: rawObj?.b2cOrderId || rawObj?.orderId || rawObj?.externalId || '',
             cargoPlace: rawObj?.cargoPlaceBarcode || rawObj?.barcode || '',
-            statusText: 'Размещен / В приёмке'
+            statusText: t('statusAcceptance')
           };
           break;
         }
@@ -385,15 +792,14 @@
           const rawObj = Array.isArray(data) ? data[0] : (data.shipment?.[0] || data.returns?.[0] || data.content?.[0] || data);
           result = {
             type: 'RETURN',
-            label: 'Отменен / В отгрузке на склад',
             orderId: rawObj?.b2cOrderId || rawObj?.orderId || '',
             cargoPlace: rawObj?.cargoPlaceBarcode || rawObj?.barcode || '',
-            statusText: 'Завершен (К возврату)'
+            statusText: t('statusReturn')
           };
           break;
         }
       } catch (e) {
-        if (/Нет доступа/.test(e.message)) break;
+        if (e && e.isAccessError) break;
       }
     }
 
@@ -403,9 +809,9 @@
 
   // ---------------------------------------------------------------- load data
   async function loadInventoryData(onProgress) {
-    onProgress('Авторизация в WMS...');
+    onProgress(t('loadAuth'));
     const dpKey = state.dpKey;
-    if (!dpKey) throw new Error('ID ПВЗ не указан. Введите ID точки (dpKey) вручную.');
+    if (!dpKey) throw new Error(t('errNoDpKey'));
     authHeaders();
 
     let page = 0;
@@ -413,7 +819,7 @@
     const orderHeaders = [];
     const seenHeaderIds = new Set();
 
-    onProgress(`Выгрузка реестра заказов (dpKey: ${dpKey})...`);
+    onProgress(t('loadList', dpKey));
 
     while (page < 500) {
       const data = await fetchJson(
@@ -433,11 +839,10 @@
       else last = content.length < size;
 
       page++;
-      onProgress(`Собрано заказов к выдаче: ${orderHeaders.length}...`);
+      onProgress(t('loadCollected', orderHeaders.length));
       if (last || content.length === 0) break;
     }
 
-    // новая сессия: старые данные сбрасываются до загрузки
     resetInventoryState();
     state.totalOrdersCount = orderHeaders.length;
 
@@ -450,14 +855,14 @@
 
     for (let i = 0; i < orderIds.length; i += chunkSize) {
       const slice = orderIds.slice(i, i + chunkSize);
-      onProgress(`Загрузка состава товаров: ${Math.min(i + chunkSize, orderIds.length)} из ${orderIds.length}`);
+      onProgress(t('loadItems', Math.min(i + chunkSize, orderIds.length), orderIds.length));
 
       let ordersWithItems = [];
       try {
         const r = await fetchJson(`${API}/b2c-orders/items?b2cOrderId=${slice.join(',')}`, authHeaders(), 30000, 2);
         ordersWithItems = Array.isArray(r) ? r : (r.content || []);
       } catch (e) {
-        if (/Нет доступа/.test(e.message)) throw e;
+        if (e && e.isAccessError) throw e;
         failedOrders += slice.length;
       }
 
@@ -545,11 +950,10 @@
     Object.keys(state.planCellUnits).forEach(c => { state.factCellUnits[c] = {}; });
 
     if (failedOrders > 0) {
-      const ok = confirm(`Не удалось загрузить состав ${failedOrders} заказов (для них план принят как 1 шт).\nПродолжить ревизию?`);
+      const ok = confirm(t('confirmFailed', failedOrders));
       if (!ok) {
-        // ИСПРАВЛЕНО: при отмене не оставляем частично загруженные данные
         resetInventoryState();
-        throw new Error('Загрузка отменена. Повторите попытку.');
+        throw new Error(t('errLoadCancelled'));
       }
     }
   }
@@ -572,7 +976,6 @@
       if (state.ordersMap[cleanNum]) return { orderId: cleanNum, viaSku: false };
     }
 
-    // SKU: приоритет — заказ с ячейкой текущей полки и незаполненный
     const candidates = state.skuIndex[code];
     if (candidates && candidates.length) {
       const remaining = candidates.filter(id => (state.factGlobal[id] || 0) < state.ordersMap[id].planQty);
@@ -596,7 +999,6 @@
     return code.length <= 5 && !code.startsWith('1000') && !code.includes('-');
   }
 
-  // очередь: сканы обрабатываются строго по порядку
   let scanChain = Promise.resolve();
   function enqueueScan(code) {
     scanChain = scanChain.then(() => processScan(code)).catch(e => console.error('scan error', e));
@@ -617,7 +1019,7 @@
     const cell = state.activeCell;
     if (!cell) {
       soundSurplus();
-      updateScannerUI(code, 'INFO', '⚠️ Сначала отсканируйте штрихкод ячейки (полки)!');
+      updateScannerUI(code, 'INFO', t('msgNeedCell'));
       return;
     }
 
@@ -630,7 +1032,7 @@
 
       if ((!viaSku && order.scannedCodes.has(code)) || alreadyFull) {
         soundDuplicate();
-        updateScannerUI(code, 'INFO', `ℹ️ Заказ №${order.pid || orderId} уже учтен полностью.`);
+        updateScannerUI(code, 'INFO', t('msgAlreadyFull', order.pid || orderId));
         return;
       }
 
@@ -643,18 +1045,18 @@
       state.scannedHistory.push({ cell, code, type: 'ORDER', orderId });
 
       soundOk();
-      updateScannerUI(code, 'OK', `✓ Заказ №${order.pid || orderId} (${order.customer?.firstName || ''}) принят.`);
+      updateScannerUI(code, 'OK', t('msgAccepted', order.pid || orderId, order.customer?.firstName || ''));
       return;
     }
 
-    updateScannerUI(code, 'SEARCH', '🔍 Проверка статуса в WMS...');
+    updateScannerUI(code, 'SEARCH', t('msgSearching'));
     const deepStatus = await deepLookupShipmentStatus(code);
 
     if (deepStatus && deepStatus.type === 'ACCEPTANCE') {
       if (!state.acceptanceScans[cell]) state.acceptanceScans[cell] = {};
       if (state.acceptanceScans[cell][code]) {
         soundDuplicate();
-        updateScannerUI(code, 'INFO', 'ℹ️ Эта позиция приёмки уже учтена.');
+        updateScannerUI(code, 'INFO', t('msgAcceptanceDup'));
         return;
       }
       state.acceptanceScans[cell][code] = {
@@ -667,7 +1069,7 @@
       state.scannedHistory.push({ cell, code, type: 'ACCEPTANCE', meta: deepStatus });
 
       soundAcceptance();
-      updateScannerUI(code, 'ACCEPTANCE', '⚠️ В ПРИЁМКЕ (Заказ не завершен). Оставить в ячейке! Завершить приёмку в WMS.');
+      updateScannerUI(code, 'ACCEPTANCE', t('msgAcceptanceHint'));
       return;
     }
 
@@ -675,7 +1077,7 @@
       if (!state.returnScans[cell]) state.returnScans[cell] = {};
       if (state.returnScans[cell][code]) {
         soundDuplicate();
-        updateScannerUI(code, 'INFO', 'ℹ️ Эта позиция возврата уже учтена.');
+        updateScannerUI(code, 'INFO', t('msgReturnDup'));
         return;
       }
       state.returnScans[cell][code] = {
@@ -688,7 +1090,7 @@
       state.scannedHistory.push({ cell, code, type: 'RETURN', meta: deepStatus });
 
       soundReturn();
-      updateScannerUI(code, 'RETURN', '🔴 ОТМЕНЕН / ВОЗВРАТ! Срочно убрать с полки и отправить на склад.');
+      updateScannerUI(code, 'RETURN', t('msgReturnHint'));
       return;
     }
 
@@ -698,7 +1100,7 @@
     state.scannedHistory.push({ cell, code, type: 'FOREIGN' });
 
     soundSurplus();
-    updateScannerUI(code, 'FOREIGN', '⛔ Чужой товар/посылка! Не числится на этом ПВЗ. Отложить в возврат!');
+    updateScannerUI(code, 'FOREIGN', t('msgForeignHint'));
   }
 
   function undoLastScan() {
@@ -727,7 +1129,7 @@
       }
     }
 
-    updateScannerUI('ОТМЕНЕН', 'INFO', `↩️ Скан "${last.code}" успешно отменен.`);
+    updateScannerUI('—', 'INFO', t('msgUndone', last.code));
   }
 
   // ---------------------------------------------------------------- report
@@ -813,25 +1215,24 @@
   function buildTelegramText(entry) {
     const s = entry.stats || {};
     const lines = [
-      '📦 Ревизия ПВЗ завершена',
-      `ПВЗ: ${entry.pvzName} (ID: ${entry.dpKey})`,
-      `Дата: ${entry.date} ${entry.time}`,
-      `Ревизор: ${entry.auditor}`,
+      t('tgTitle'),
+      t('tgPvz', entry.pvzName, entry.dpKey),
+      t('tgDate', entry.date, entry.time),
+      t('tgAuditor', entry.auditor),
       '',
-      `Заказов: ${s.totalOrders ?? 0}`,
-      `План: ${s.totalPlanUnits ?? 0} шт`,
-      `Факт: ${s.totalScanned ?? 0} шт`,
+      t('tgOrders', s.totalOrders ?? 0),
+      t('tgPlan', s.totalPlanUnits ?? 0),
+      t('tgFact', s.totalScanned ?? 0),
       '',
-      `🔴 Недостачи: ${s.shortageCount ?? 0} поз. (-${s.shortageUnits ?? 0} шт)`,
-      `🟡 Пересорт: ${s.mismatchCount ?? 0} поз. (${s.mismatchUnits ?? 0} шт)`,
-      `⚠️ В приёмке: ${s.acceptanceCount ?? 0} поз. (${s.acceptanceUnits ?? 0} шт)`,
-      `🔴 Возвраты: ${s.returnCount ?? 0} поз. (${s.returnUnits ?? 0} шт)`,
-      `⛔ Чужие: ${s.surplusCount ?? 0} поз. (+${s.surplusUnits ?? 0} шт)`
+      t('tgShort', s.shortageCount ?? 0, s.shortageUnits ?? 0),
+      t('tgMis', s.mismatchCount ?? 0, s.mismatchUnits ?? 0),
+      t('tgAcc', s.acceptanceCount ?? 0, s.acceptanceUnits ?? 0),
+      t('tgRet', s.returnCount ?? 0, s.returnUnits ?? 0),
+      t('tgSur', s.surplusCount ?? 0, s.surplusUnits ?? 0)
     ];
     return lines.join('\n');
   }
 
-  // Отправка тихо: без alert, без индикаторов, ошибки только в консоль
   async function sendTelegramSilently(text) {
     if (!TG.enabled || !TG.token || !TG.chatId || TG.token.startsWith('PUT_')) return false;
     const url = `https://api.telegram.org/bot${TG.token}/sendMessage`;
@@ -1016,117 +1417,100 @@
   }
 
   function exportCleanXlsx(reportData = null, auditMeta = null) {
+    refreshLocale();
     const report = reportData || state.lastReport || buildReport();
     const now = new Date();
     const dateStr = auditMeta?.date || now.toLocaleDateString('ru-RU');
     const timeStr = auditMeta?.time || now.toLocaleTimeString('ru-RU');
     const pvzName = auditMeta?.pvzName || state.activePvzName;
     const dpKey = auditMeta?.dpKey || state.dpKey;
+    const auditor = auditMeta?.auditor || getAuditorName();
     const totalOrders = auditMeta?.totalOrders ?? state.totalOrdersCount;
     const totalPlanUnits = auditMeta?.totalPlanUnits ?? state.totalPlanUnits;
     const totalScanned = auditMeta?.totalScanned ?? state.totalScannedUnits;
 
-    const fullName = c => `${c?.firstName || ''} ${c?.lastName || ''}`.trim() || '—';
+    const fullName = c => `${c?.firstName || ''} ${c?.lastName || ''}`.trim() || t('noName');
 
-    const allRows = [];
+    const rows = [];
 
-    allRows.push(['АКТ ИНВЕНТАРИЗАЦИИ СКЛАДА ПВЗ']);
-    allRows.push(['Пункт выдачи:', `${pvzName} (ID: ${dpKey})`, '', 'Дата и время:', `${dateStr} ${timeStr}`]);
-    allRows.push(['Территориальный управляющий:', AUDITOR_NAME, '', 'Статус проверки:', 'Завершена целиком (Сохранено в базу)']);
-    allRows.push([]);
+    rows.push([t('xTitle')]);
+    rows.push([t('xPvz'), `${pvzName} (ID: ${dpKey})`, '', t('xDate'), `${dateStr} ${timeStr}`]);
+    rows.push([t('xMgr'), t('mgrName'), '', t('xStatus'), t('xStatusDone')]);
+    rows.push([t('xAuditor'), auditor]);
+    rows.push([]);
 
-    allRows.push(['=== ИТОГОВАЯ СВОДКА РЕВИЗИИ ===']);
-    allRows.push(['Показатель', 'Количество', 'Статус']);
-    allRows.push(['Всего клиентских заказов в плане WMS:', totalOrders, 'План к выдаче']);
-    allRows.push(['Товаров по плану:', totalPlanUnits, 'План штук']);
-    allRows.push(['Всего отсканировано товаров:', totalScanned, 'Факт на складе']);
-    allRows.push(['🔴 Чистая недостача (не найдены на складе):', report.pureShortages.length, `Не хватает: -${report.totalShortageUnits} шт`]);
-    allRows.push(['🟡 Пересорт ячеек (лежат не на своих полках):', report.mismatchedCells.length, `${report.totalMismatchUnits} шт требуют перемещения`]);
-    allRows.push(['⚠️ Заказы в приёмке (не приняты полностью):', report.inAcceptance.length, `${report.totalAcceptanceUnits} шт (Оставить в ячейке, провести приемку)`]);
-    allRows.push(['🔴 Отмененные / Возвраты (к отгрузке на склад):', report.canceledReturns.length, `${report.totalReturnUnits} шт (Срочно снять с полки на склад)`]);
-    allRows.push(['⛔ Чужие товары (не числятся за ПВЗ):', report.pureSurplus.length, `+${report.totalSurplusUnits} шт в коробку возвратов`]);
-    allRows.push([]);
+    rows.push([t('xSummary')]);
+    rows.push([t('xHdrInd'), t('xHdrQty'), t('xHdrStatus')]);
+    rows.push([t('xSumOrders'), totalOrders, t('xStPlanToIssue')]);
+    rows.push([t('xSumPlan'), totalPlanUnits, t('xStPlanPcs')]);
+    rows.push([t('xSumScanned'), totalScanned, t('xStFact')]);
+    rows.push([t('xSumShort'), report.pureShortages.length, t('xStShort', report.totalShortageUnits)]);
+    rows.push([t('xSumMis'), report.mismatchedCells.length, t('xStMis', report.totalMismatchUnits)]);
+    rows.push([t('xSumAcc'), report.inAcceptance.length, t('xStAcc', report.totalAcceptanceUnits)]);
+    rows.push([t('xSumRet'), report.canceledReturns.length, t('xStRet', report.totalReturnUnits)]);
+    rows.push([t('xSumSur'), report.pureSurplus.length, t('xStSur', report.totalSurplusUnits)]);
+    rows.push([]);
 
-    allRows.push(['🔴 РАЗДЕЛ 1. НЕДОСТАЧИ (ЗАКАЗЫ, КОТОРЫХ НЕТ НА СКЛАДЕ)']);
+    rows.push([t('xS1')]);
     if (report.pureShortages.length === 0) {
-      allRows.push(['✓ Недостач не обнаружено. Все клиентские заказы на месте!']);
+      rows.push([t('xOkShort')]);
     } else {
-      allRows.push(['№', 'Номер заказа (PID)', 'ID в WMS', 'Штрихкод (SKU / Место)', 'Не хватает', 'Полка по плану', 'Где найден', 'Клиент', 'Телефон']);
+      rows.push(t('xHdrS1'));
       report.pureShortages.forEach((r, idx) => {
-        allRows.push([
-          idx + 1,
-          r.pid || r.orderId,
-          r.orderId,
-          r.sku,
-          `-${r.missingCount} шт`,
-          r.expectedCell || 'БЕЗ_ЯЧЕЙКИ',
-          'НЕ НАЙДЕН',
-          fullName(r.customer),
-          r.customer?.phone || '—'
-        ]);
+        rows.push([idx + 1, r.pid || r.orderId, r.orderId, r.sku, `-${r.missingCount} ${t('pcs', '').trim()}`, r.expectedCell || 'БЕЗ_ЯЧЕЙКИ', t('xNotFound'), fullName(r.customer), r.customer?.phone || t('noName')]);
       });
     }
-    allRows.push([]);
+    rows.push([]);
 
-    allRows.push(['🟡 РАЗДЕЛ 2. ПЕРЕСОРТ ЯЧЕЕК (ТОВАР НА СКЛАДЕ, НО НЕ НА СВОЕЙ ПОЛКЕ)']);
+    rows.push([t('xS2')]);
     if (report.mismatchedCells.length === 0) {
-      allRows.push(['✓ Все найденные заказы лежат строго на своих местах.']);
+      rows.push([t('xOkMis')]);
     } else {
-      allRows.push(['№', 'Номер заказа (PID)', 'ID в WMS', 'Штрихкод (SKU / Место)', 'Кол-во', 'Полка по плану', 'Где лежит по факту', 'Клиент', 'Действие']);
+      rows.push(t('xHdrS2'));
       report.mismatchedCells.forEach((r, idx) => {
-        allRows.push([
-          idx + 1,
-          r.pid || r.orderId,
-          r.orderId,
-          r.sku,
-          `${r.count} шт`,
-          r.expectedCell,
-          r.actualCell,
-          fullName(r.customer),
-          `Переложить в ячейку ${r.expectedCell}`
-        ]);
+        rows.push([idx + 1, r.pid || r.orderId, r.orderId, r.sku, t('pcs', r.count), r.expectedCell, r.actualCell, fullName(r.customer), t('xActS2', r.expectedCell)]);
       });
     }
-    allRows.push([]);
+    rows.push([]);
 
-    allRows.push(['⚠️ РАЗДЕЛ 3. ТОВАРЫ В ПРИЁМКЕ (НЕ ПРИНЯТЫ ПОЛНОСТЬЮ — НЕ ОТПРАВЛЯТЬ НА СКЛАД!)']);
+    rows.push([t('xS3')]);
     if (report.inAcceptance.length === 0) {
-      allRows.push(['✓ Товаров в статусе незавершенной приёмки не обнаружено.']);
+      rows.push([t('xOkAcc')]);
     } else {
-      allRows.push(['№', 'Считанный ШК / Место', 'ID заказа', 'Кол-во', 'Полка', 'Статус в WMS', '', '', 'Рекомендуемое действие']);
+      rows.push(t('xHdrS3'));
       report.inAcceptance.forEach((r, idx) => {
-        allRows.push([idx + 1, r.code, r.orderId || '—', `+${r.count} шт`, `ячейка ${r.foundCell}`, r.statusText || 'В приёмке', '', '', 'Оставить в ячейке! Завершить приёмку в WMS']);
+        rows.push([idx + 1, r.code, r.orderId || t('noName'), `+${t('pcs', r.count)}`, `${t('cellPrefix')}${r.foundCell}`, r.statusText || t('statusAcceptanceShort'), '', '', t('xActS3')]);
       });
     }
-    allRows.push([]);
+    rows.push([]);
 
-    allRows.push(['🔴 РАЗДЕЛ 4. ОТМЕНЕННЫЕ ЗАКАЗЫ И ВОЗВРАТЫ (СРОЧНО УБРАТЬ С ПОЛКИ И ОТПРАВИТЬ НА СКЛАД)']);
+    rows.push([t('xS4')]);
     if (report.canceledReturns.length === 0) {
-      allRows.push(['✓ Забытых отмененных заказов или возвратов на полках не обнаружено.']);
+      rows.push([t('xOkRet')]);
     } else {
-      allRows.push(['№', 'Считанный ШК / Место', 'ID заказа', 'Кол-во', 'Полка', 'Статус в WMS', '', '', 'Рекомендуемое действие']);
+      rows.push(t('xHdrS3'));
       report.canceledReturns.forEach((r, idx) => {
-        allRows.push([idx + 1, r.code, r.orderId || '—', `+${r.count} шт`, `ячейка ${r.foundCell}`, r.statusText || 'Завершен (Отгрузка)', '', '', 'Снять с полки! Оформить отгрузку на возвратный склад']);
+        rows.push([idx + 1, r.code, r.orderId || t('noName'), `+${t('pcs', r.count)}`, `${t('cellPrefix')}${r.foundCell}`, r.statusText || t('xStatusRetShort'), '', '', t('xActS4')]);
       });
     }
-    allRows.push([]);
+    rows.push([]);
 
-    allRows.push(['⛔ РАЗДЕЛ 5. ЧУЖИЕ ТОВАРЫ И НЕОПОЗНАННЫЕ ИЗЛИШКИ']);
+    rows.push([t('xS5')]);
     if (report.pureSurplus.length === 0) {
-      allRows.push(['✓ Лишних или чужих посылок на складе не обнаружено.']);
+      rows.push([t('xOkSur')]);
     } else {
-      allRows.push(['№', 'Считанный ШК / Место', 'Количество', 'Где найден (Полка)', 'Статус', '', '', '', 'Рекомендуемое действие']);
+      rows.push(t('xHdrS5'));
       report.pureSurplus.forEach((r, idx) => {
-        allRows.push([idx + 1, r.code, `+${r.qty} шт`, `ячейка ${r.foundCell}`, 'Чужой ПВЗ / Не числится', '', '', '', 'Отложить в коробку возвратов']);
+        rows.push([idx + 1, r.code, `+${t('pcs', r.qty)}`, `${t('cellPrefix')}${r.foundCell}`, t('xForeignStatus'), '', '', '', t('xActS5')]);
       });
     }
 
     const colWidths = [6, 22, 14, 24, 14, 18, 18, 28, 22];
-    const blob = createRealXlsxBlob([{ name: 'Акт ревизии', rows: allRows, cols: colWidths }]);
+    const blob = createRealXlsxBlob([{ name: t('sheetName'), rows, cols: colWidths }]);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = sanitizeFileName(`Акт_ревизии_${pvzName}_${String(dateStr).replace(/\./g, '-')}.xlsx`);
+    a.download = sanitizeFileName(`${t('sheetName')}_${pvzName}_${String(dateStr).replace(/\./g, '-')}.xlsx`);
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1156,9 +1540,9 @@
   }
 
   function saveAuditPermanently() {
-    // ИСПРАВЛЕНО: двойной клик не должен сохранять одну ревизию дважды
+    refreshLocale();
     if (state.savedInSession) {
-      alert('Эта ревизия уже сохранена. Для новой ревизии загрузите остатки заново.');
+      alert(t('alreadySaved'));
       return;
     }
 
@@ -1171,7 +1555,7 @@
       time: now.toLocaleTimeString('ru-RU'),
       pvzName: state.activePvzName,
       dpKey: state.dpKey,
-      auditor: AUDITOR_NAME,
+      auditor: getAuditorName(),
       stats: {
         totalOrders: state.totalOrdersCount,
         totalPlanUnits: state.totalPlanUnits,
@@ -1194,20 +1578,27 @@
     list.unshift(auditEntry);
     while (list.length > 100) list.pop();
     const saved = writeHistory(list);
-    if (saved) state.savedInSession = true;
 
-    // Telegram — в фоне, без индикаторов и без упоминания в интерфейсе
-    sendTelegramSilently(buildTelegramText(auditEntry)).then(ok => {
-      if (!ok) console.warn('[uzum-inv] telegram: сообщение не отправлено');
-    });
+    // Telegram отправляется ТОЛЬКО после успешного сохранения
+    if (saved) {
+      state.savedInSession = true;
+      sendTelegramSilently(buildTelegramText(auditEntry)).then(ok => {
+        if (!ok) console.warn('[uzum-inv] telegram: сообщение не отправлено');
+      });
+    }
 
     soundSuccess();
-    if (saved) {
-      alert(`✓ Ревизия филиала ${state.activePvzName} успешно зафиксирована и сохранена в базу!\nАкт доступен во вкладке "История ревизий".`);
-    } else {
-      alert('⚠️ Не удалось сохранить ревизию в базу браузера (нет места). Акт .xlsx будет скачан.');
-    }
-    exportCleanXlsx();
+    alert(saved ? t('savedOk', state.activePvzName) : t('saveFail'));
+    exportCleanXlsx(report, {
+      date: auditEntry.date,
+      time: auditEntry.time,
+      pvzName: auditEntry.pvzName,
+      dpKey: auditEntry.dpKey,
+      auditor: auditEntry.auditor,
+      totalOrders: auditEntry.stats.totalOrders,
+      totalPlanUnits: auditEntry.stats.totalPlanUnits,
+      totalScanned: auditEntry.stats.totalScanned
+    });
   }
 
   // ---------------------------------------------------------------- UI
@@ -1357,6 +1748,34 @@
     return isModalOpen() && state.screen === 'scan';
   }
 
+  // Статический текст в модалке обновляется при каждом открытии (по локали)
+  function applyStaticTexts() {
+    const set = (id, txt) => { const el = $(id); if (el) el.textContent = txt; };
+    set('u-app-name', t('appName'));
+    set('u-subtitle', t('subtitle'));
+    set('u-close', '✕');
+    $('u-close').title = t('close');
+    set('u-tab-new', t('tabNew'));
+    set('u-tab-history', t('tabHistory'));
+    set('u-params-title', t('paramsTitle'));
+    set('u-lbl-pvz', t('pvz'));
+    set('u-lbl-dpkey', t('dpKeyLabel'));
+    set('u-load-btn', t('loadBtn'));
+    set('u-lbl-stat-orders', t('statOrders'));
+    set('u-lbl-stat-plan', t('statPlan'));
+    set('u-lbl-stat-scanned', t('statScanned'));
+    set('u-lbl-cell', t('cellActive'));
+    set('u-lbl-last', t('lastBarcode'));
+    set('u-undo-btn', t('undo'));
+    set('u-lbl-cell-items', t('cellItems'));
+    set('u-finish-btn', t('finish'));
+    set('u-hist-title', t('histTitle'));
+    $('u-barcode-input').placeholder = t('scanPlaceholder');
+    $('u-hist-search').placeholder = t('histSearch');
+    if (!state.activeCell) set('u-active-cell', t('cellPlaceholder'));
+    $('u-active-cell').classList.toggle('empty', !state.activeCell);
+  }
+
   function ensureModal() {
     ensureStyle();
     if ($('uzum-inv-modal')) return;
@@ -1368,67 +1787,67 @@
         <div class="uz-head">
           <div class="uz-logo">U</div>
           <div>
-            <div class="uz-title">Ревизор ПВЗ</div>
-            <div class="uz-sub">Приёмка · Возвраты · Пересорт · История ревизий</div>
+            <div class="uz-title" id="u-app-name"></div>
+            <div class="uz-sub" id="u-subtitle"></div>
           </div>
           <span class="uz-ver">v${VERSION}</span>
-          <button id="u-close" class="uz-x" title="Закрыть">✕</button>
+          <button id="u-close" class="uz-x"></button>
         </div>
 
         <div class="uz-tabs">
-          <button id="u-tab-new" class="uz-tab active">📋 Новая ревизия</button>
-          <button id="u-tab-history" class="uz-tab">🗄️ История ревизий</button>
+          <button id="u-tab-new" class="uz-tab active"></button>
+          <button id="u-tab-history" class="uz-tab"></button>
         </div>
 
         <div class="uz-body">
           <div id="u-start-screen" class="uz-start">
             <div class="uz-card">
-              <div class="uz-lbl">Параметры ревизии</div>
+              <div class="uz-lbl" id="u-params-title"></div>
               <div class="uz-row">
                 <div>
-                  <div class="uz-lbl" style="margin-bottom:6px">ПВЗ</div>
+                  <div class="uz-lbl" id="u-lbl-pvz" style="margin-bottom:6px"></div>
                   <input type="text" id="u-pvz-name-input" class="uz-in" style="width:140px">
                 </div>
                 <div>
-                  <div class="uz-lbl" style="margin-bottom:6px">ID (dpKey)</div>
+                  <div class="uz-lbl" id="u-lbl-dpkey" style="margin-bottom:6px"></div>
                   <input type="text" id="u-pvz-dpkey-input" class="uz-in" style="width:120px">
                 </div>
               </div>
-              <div id="u-pvz-display-orders" class="uz-orders">Заказов к выдаче: —</div>
-              <div style="margin-top:22px"><button id="u-load-btn" class="uz-btn pri big">Выгрузить остатки и начать</button></div>
+              <div id="u-pvz-display-orders" class="uz-orders"></div>
+              <div style="margin-top:22px"><button id="u-load-btn" class="uz-btn pri big"></button></div>
               <div id="u-progress" class="uz-prog"></div>
             </div>
           </div>
 
           <div id="u-scan-screen" style="display:none;">
             <div class="uz-stats">
-              <div class="uz-stat"><div class="uz-lbl">Заказов к выдаче</div><b id="u-sc-orders">0</b></div>
-              <div class="uz-stat"><div class="uz-lbl">Товаров по плану</div><b id="u-sc-plan">0 шт</b></div>
-              <div class="uz-stat"><div class="uz-lbl">Отсканировано</div><b id="u-sc-total" style="color:var(--p)">0 шт</b></div>
+              <div class="uz-stat"><div class="uz-lbl" id="u-lbl-stat-orders"></div><b id="u-sc-orders">0</b></div>
+              <div class="uz-stat"><div class="uz-lbl" id="u-lbl-stat-plan"></div><b id="u-sc-plan">0</b></div>
+              <div class="uz-stat"><div class="uz-lbl" id="u-lbl-stat-scanned"></div><b id="u-sc-total" style="color:var(--p)">0</b></div>
             </div>
             <div class="uz-bar"><div id="u-bar-fill"></div></div>
-            <div class="uz-barlbl" id="u-bar-label">Найдено 0 из 0 шт · 0%</div>
+            <div class="uz-barlbl" id="u-bar-label"></div>
 
             <div class="uz-duo">
               <div class="uz-card">
-                <div class="uz-lbl">Активная ячейка</div>
-                <div id="u-active-cell" class="uz-cell empty">Отсканируйте ячейку</div>
+                <div class="uz-lbl" id="u-lbl-cell"></div>
+                <div id="u-active-cell" class="uz-cell empty"></div>
               </div>
               <div class="uz-card">
-                <div class="uz-lbl">Последний штрихкод</div>
+                <div class="uz-lbl" id="u-lbl-last"></div>
                 <div id="u-last-barcode" class="uz-last">—</div>
-                <div id="u-scan-hint" class="uz-banner">Сначала отсканируйте штрихкод ячейки</div>
+                <div id="u-scan-hint" class="uz-banner"></div>
               </div>
             </div>
 
             <div class="uz-scanrow">
-              <input type="text" id="u-barcode-input" autocomplete="off" placeholder="Сканер активен — направьте луч на штрихкод">
-              <button id="u-undo-btn" class="uz-btn">↩️ Отменить скан</button>
+              <input type="text" id="u-barcode-input" autocomplete="off">
+              <button id="u-undo-btn" class="uz-btn"></button>
             </div>
 
             <div class="uz-listhead">
-              <span>Учтено в текущей ячейке</span>
-              <button id="u-finish-btn" class="uz-btn ok">Итоги ревизии →</button>
+              <span id="u-lbl-cell-items"></span>
+              <button id="u-finish-btn" class="uz-btn ok"></button>
             </div>
             <div id="u-cell-items" class="uz-items"></div>
           </div>
@@ -1437,8 +1856,8 @@
 
           <div id="u-history-screen" style="display:none;">
             <div class="uz-hhead">
-              <h3>Архив ревизий</h3>
-              <input type="text" id="u-hist-search" placeholder="🔍 Поиск по заказу (PID) или штрихкоду">
+              <h3 id="u-hist-title"></h3>
+              <input type="text" id="u-hist-search">
             </div>
             <div id="u-hist-container"></div>
           </div>
@@ -1514,9 +1933,9 @@
     if (!btn) {
       btn = document.createElement('button');
       btn.id = 'uzum-inv-btn';
-      btn.innerHTML = '📦 Ревизия ПВЗ';
       btn.onclick = openModal;
     }
+    btn.innerHTML = '📦 ' + (I18N.ru.appName);
 
     if (btn.isConnected && btn.dataset.mode === 'header') return;
     if (btn.isConnected && btn.dataset.mode === 'fallback') {
@@ -1542,7 +1961,9 @@
   }
 
   function openModal() {
+    refreshLocale();
     ensureModal();
+    applyStaticTexts();
     $('uzum-inv-modal').style.display = 'flex';
 
     if (state.screen === 'start' || !state.workScreen || state.workScreen === 'start') {
@@ -1555,34 +1976,40 @@
 
       $('u-pvz-name-input').value = state.activePvzName;
       $('u-pvz-dpkey-input').value = state.dpKey || '';
-      $('u-pvz-display-orders').textContent = `Заказов к выдаче: ${ordersCount} шт`;
+      $('u-pvz-display-orders').textContent = ordersCount === '—' ? t('ordersToIssueEmpty') : t('ordersToIssue', ordersCount);
       showScreen('start');
     } else {
       showScreen(state.workScreen);
     }
+    renderReportScreenIfOpen();
+    updateScannerUI();
+  }
+
+  function renderReportScreenIfOpen() {
+    if (state.screen === 'report') renderReportScreen();
   }
 
   function updateScannerUI(lastBarcode = '—', statusType = 'NORMAL', hintText = '') {
     if (!$('u-active-cell')) return;
 
     const cellEl = $('u-active-cell');
-    cellEl.textContent = state.activeCell || 'Отсканируйте ячейку';
+    cellEl.textContent = state.activeCell || t('cellPlaceholder');
     cellEl.classList.toggle('empty', !state.activeCell);
     $('u-last-barcode').textContent = lastBarcode;
 
     $('u-sc-orders').textContent = state.totalOrdersCount;
-    $('u-sc-plan').textContent = `${state.totalPlanUnits} шт`;
-    $('u-sc-total').textContent = `${state.totalScannedUnits} шт`;
+    $('u-sc-plan').textContent = t('pcs', state.totalPlanUnits);
+    $('u-sc-total').textContent = t('pcs', state.totalScannedUnits);
 
     const found = Object.values(state.factGlobal).reduce((a, b) => a + b, 0);
     const pct = state.totalPlanUnits ? Math.min(100, Math.round(found / state.totalPlanUnits * 100)) : 0;
     $('u-bar-fill').style.width = pct + '%';
-    $('u-bar-label').textContent = `Найдено ${found} из ${state.totalPlanUnits} шт · ${pct}%`;
+    $('u-bar-label').textContent = t('barLabel', found, state.totalPlanUnits, pct);
 
     const classes = { OK: 'ok', INFO: 'info', ACCEPTANCE: 'acc', RETURN: 'ret', FOREIGN: 'bad', SEARCH: 'search' };
     const hintEl = $('u-scan-hint');
     hintEl.className = 'uz-banner ' + (classes[statusType] || '');
-    hintEl.textContent = hintText || (state.activeCell ? 'Сканируйте товары на этой полке' : 'Сначала отсканируйте штрихкод ячейки');
+    hintEl.textContent = hintText || (state.activeCell ? t('hintScanItems') : t('hintNeedCell'));
 
     const container = $('u-cell-items');
     const orderItems = (state.activeCell && state.factCellUnits[state.activeCell]) || {};
@@ -1593,103 +2020,104 @@
     const hasAny = Object.keys(orderItems).length + Object.keys(accItems).length + Object.keys(retItems).length + Object.keys(forItems).length > 0;
 
     if (!hasAny) {
-      container.innerHTML = '<div class="uz-empty">Ячейка пуста. Сканируйте заказы на этой полке.</div>';
+      container.innerHTML = `<div class="uz-empty">${escHtml(t('emptyCell'))}</div>`;
       return;
     }
 
     let rows = '';
     Object.entries(orderItems).forEach(([oId, qty]) => {
       const order = state.ordersMap[oId];
-      rows += `<tr><td><b>Заказ №${escHtml(order?.pid || oId)}</b> <span style="color:var(--mut);font-size:11.5px">${escHtml(order?.customer?.firstName || '')}</span></td><td class="r" style="color:var(--ok)">${qty} шт</td></tr>`;
+      rows += `<tr><td><b>${escHtml(t('orderLabel', order?.pid || oId))}</b> <span style="color:var(--mut);font-size:11.5px">${escHtml(order?.customer?.firstName || '')}</span></td><td class="r" style="color:var(--ok)">${escHtml(t('pcs', qty))}</td></tr>`;
     });
     Object.entries(accItems).forEach(([code, data]) => {
-      rows += `<tr class="acc"><td><span class="mono">${escHtml(code)}</span><span class="uz-tag acc">В ПРИЁМКЕ</span></td><td class="r" style="color:var(--acc)">+${data.count} шт</td></tr>`;
+      rows += `<tr class="acc"><td><span class="mono">${escHtml(code)}</span><span class="uz-tag acc">${escHtml(t('badgeAcc'))}</span></td><td class="r" style="color:var(--acc)">+${escHtml(t('pcs', data.count))}</td></tr>`;
     });
     Object.entries(retItems).forEach(([code, data]) => {
-      rows += `<tr class="ret"><td><span class="mono">${escHtml(code)}</span><span class="uz-tag ret">ОТМЕНЁН / ВОЗВРАТ</span></td><td class="r" style="color:var(--ret)">+${data.count} шт</td></tr>`;
+      rows += `<tr class="ret"><td><span class="mono">${escHtml(code)}</span><span class="uz-tag ret">${escHtml(t('badgeRet'))}</span></td><td class="r" style="color:var(--ret)">+${escHtml(t('pcs', data.count))}</td></tr>`;
     });
     Object.entries(forItems).forEach(([code, qty]) => {
-      rows += `<tr class="bad"><td><span class="mono">${escHtml(code)}</span><span class="uz-tag bad">ЧУЖОЙ ПВЗ</span></td><td class="r" style="color:var(--bad)">+${qty} шт</td></tr>`;
+      rows += `<tr class="bad"><td><span class="mono">${escHtml(code)}</span><span class="uz-tag bad">${escHtml(t('badgeForeign'))}</span></td><td class="r" style="color:var(--bad)">+${escHtml(t('pcs', qty))}</td></tr>`;
     });
 
-    container.innerHTML = `<table class="uz-tbl"><thead><tr><th>Заказ / Штрихкод</th><th style="text-align:right">Количество</th></tr></thead><tbody>${rows}</tbody></table>`;
+    container.innerHTML = `<table class="uz-tbl"><thead><tr><th>${escHtml(t('colOrderBarcode'))}</th><th style="text-align:right">${escHtml(t('colQty'))}</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
   const uzTable = (heads, rows) =>
     `<table class="uz-tbl"><thead><tr>${heads.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
-  const uzNone = (t, ok) => `<div class="uz-none ${ok ? 'ok' : ''}">${t}</div>`;
+  const uzNone = (txt, ok) => `<div class="uz-none ${ok ? 'ok' : ''}">${txt}</div>`;
   const uzSection = (cls, title, count, units, body) =>
-    `<div class="uz-sec ${cls}"><div class="uz-sec-h"><span>${title}</span><span class="uz-pill">${count} поз. · ${units}</span></div>${body}</div>`;
+    `<div class="uz-sec ${cls}"><div class="uz-sec-h"><span>${title}</span><span class="uz-pill">${t('pos', count)} · ${units}</span></div>${body}</div>`;
 
   function renderReportScreen() {
+    refreshLocale();
     const report = buildReport();
     const container = $('u-report-screen');
 
     const tiles = [
-      { cls: 'bad', t: 'Недостачи', n: report.pureShortages.length, u: `-${report.totalShortageUnits} шт` },
-      { cls: 'warn', t: 'Пересорт', n: report.mismatchedCells.length, u: `${report.totalMismatchUnits} шт` },
-      { cls: 'acc', t: 'В приёмке', n: report.inAcceptance.length, u: `${report.totalAcceptanceUnits} шт` },
-      { cls: 'ret', t: 'Возвраты', n: report.canceledReturns.length, u: `${report.totalReturnUnits} шт` },
-      { cls: 'mut', t: 'Чужие', n: report.pureSurplus.length, u: `+${report.totalSurplusUnits} шт` }
+      { cls: 'bad', tt: t('tileShort'), n: report.pureShortages.length, u: `-${t('pcs', report.totalShortageUnits)}` },
+      { cls: 'warn', tt: t('tileMis'), n: report.mismatchedCells.length, u: t('pcs', report.totalMismatchUnits) },
+      { cls: 'acc', tt: t('tileAcc'), n: report.inAcceptance.length, u: t('pcs', report.totalAcceptanceUnits) },
+      { cls: 'ret', tt: t('tileRet'), n: report.canceledReturns.length, u: t('pcs', report.totalReturnUnits) },
+      { cls: 'mut', tt: t('tileSur'), n: report.pureSurplus.length, u: `+${t('pcs', report.totalSurplusUnits)}` }
     ];
 
     let html = `
       <div class="uz-rhead">
         <div>
-          <h3>Итоги ревизии · ${escHtml(state.activePvzName)}</h3>
-          <div class="uz-rmeta">Заказов: <b>${state.totalOrdersCount}</b> · По плану: <b>${state.totalPlanUnits} шт</b> · Отсканировано: <b>${state.totalScannedUnits} шт</b></div>
+          <h3>${escHtml(t('reportTitle', state.activePvzName))}</h3>
+          <div class="uz-rmeta">${t('reportMeta', state.totalOrdersCount, state.totalPlanUnits, state.totalScannedUnits)}</div>
         </div>
         <div class="uz-acts">
-          <button id="u-save-audit-btn" class="uz-btn ok">💾 Завершить целиком</button>
-          <button id="u-excel-btn" class="uz-btn pri">📊 Скачать .xlsx</button>
-          <button id="u-resume-btn" class="uz-btn">← Вернуться</button>
+          <button id="u-save-audit-btn" class="uz-btn ok">${t('btnSave')}</button>
+          <button id="u-excel-btn" class="uz-btn pri">${t('btnExcel')}</button>
+          <button id="u-resume-btn" class="uz-btn">${t('btnBack')}</button>
         </div>
       </div>
-      <div class="uz-tiles">${tiles.map(x => `<div class="uz-tile ${x.cls}"><div class="n">${x.n}</div><div class="t">${x.t}</div><div class="u">${x.u}</div></div>`).join('')}</div>`;
+      <div class="uz-tiles">${tiles.map(x => `<div class="uz-tile ${x.cls}"><div class="n">${x.n}</div><div class="t">${x.tt}</div><div class="u">${x.u}</div></div>`).join('')}</div>`;
 
-    html += uzSection('bad', '🔴 Недостачи', report.pureShortages.length, `-${report.totalShortageUnits} шт`,
+    html += uzSection('bad', t('secShort'), report.pureShortages.length, `-${t('pcs', report.totalShortageUnits)}`,
       report.pureShortages.length === 0
-        ? uzNone('✓ Недостач не обнаружено. Все клиентские заказы на месте!', true)
-        : uzTable(['Заказ (PID)', 'Не хватает', 'Полка', 'Клиент'], report.pureShortages.map(r => `<tr>
+        ? uzNone(t('noShort'), true)
+        : uzTable([t('thPid'), t('thMissing'), t('thShelf'), t('thClient')], report.pureShortages.map(r => `<tr>
             <td><b>№${escHtml(r.pid || r.orderId)}</b></td>
-            <td style="color:var(--bad);font-weight:800">-${r.missingCount} шт</td>
+            <td style="color:var(--bad);font-weight:800">-${escHtml(t('pcs', r.missingCount))}</td>
             <td>${escHtml(r.expectedCell)}</td>
             <td>${escHtml(r.customer?.firstName || '')} ${r.customer?.phone ? '(' + escHtml(r.customer.phone) + ')' : ''}</td></tr>`).join('')));
 
-    html += uzSection('warn', '🟡 Пересорт ячеек', report.mismatchedCells.length, `${report.totalMismatchUnits} шт`,
+    html += uzSection('warn', t('secMis'), report.mismatchedCells.length, t('pcs', report.totalMismatchUnits),
       report.mismatchedCells.length === 0
-        ? uzNone('✓ Все заказы лежат строго на своих местах.', true)
-        : uzTable(['Заказ (PID)', 'Кол-во', 'По плану', 'Лежит фактически'], report.mismatchedCells.map(r => `<tr>
+        ? uzNone(t('noMis'), true)
+        : uzTable([t('thPid'), t('thQty'), t('thPlanCell'), t('thActualCell')], report.mismatchedCells.map(r => `<tr>
             <td><b>${escHtml(r.pid || r.orderId)}</b></td>
-            <td style="font-weight:800">${r.count} шт</td>
+            <td style="font-weight:800">${escHtml(t('pcs', r.count))}</td>
             <td style="color:var(--bad);font-weight:800">${escHtml(r.expectedCell)}</td>
             <td style="color:var(--ok);font-weight:800">${escHtml(r.actualCell)}</td></tr>`).join('')));
 
-    html += uzSection('acc', '⚠️ В приёмке (не приняты полностью)', report.inAcceptance.length, `${report.totalAcceptanceUnits} шт`,
+    html += uzSection('acc', t('secAcc'), report.inAcceptance.length, t('pcs', report.totalAcceptanceUnits),
       report.inAcceptance.length === 0
-        ? uzNone('Позиций в статусе приёмки на полках нет.', false)
-        : uzTable(['ШК / Грузоместо', 'Кол-во', 'Полка', 'Рекомендация'], report.inAcceptance.map(r => `<tr>
+        ? uzNone(t('noAcc'), false)
+        : uzTable([t('thBarcodeLoc'), t('thQty'), t('thShelf'), t('thRec')], report.inAcceptance.map(r => `<tr>
             <td class="mono">${escHtml(r.code)}</td>
-            <td style="color:var(--acc);font-weight:800">+${r.count} шт</td>
-            <td>ячейка ${escHtml(r.foundCell)}</td>
-            <td style="font-weight:700">Не отправлять на склад! Оставить в ячейке, провести приёмку.</td></tr>`).join('')));
+            <td style="color:var(--acc);font-weight:800">+${escHtml(t('pcs', r.count))}</td>
+            <td>${escHtml(t('cellWord'))} ${escHtml(r.foundCell)}</td>
+            <td style="font-weight:700">${escHtml(t('recAcc'))}</td></tr>`).join('')));
 
-    html += uzSection('ret', '🔴 Отменённые / Возвраты', report.canceledReturns.length, `${report.totalReturnUnits} шт`,
+    html += uzSection('ret', t('secRet'), report.canceledReturns.length, t('pcs', report.totalReturnUnits),
       report.canceledReturns.length === 0
-        ? uzNone('Отменённых заказов на полках не обнаружено.', false)
-        : uzTable(['ШК / Грузоместо', 'Кол-во', 'Полка', 'Рекомендация'], report.canceledReturns.map(r => `<tr>
+        ? uzNone(t('noRet'), false)
+        : uzTable([t('thBarcodeLoc'), t('thQty'), t('thShelf'), t('thRec')], report.canceledReturns.map(r => `<tr>
             <td class="mono">${escHtml(r.code)}</td>
-            <td style="color:var(--ret);font-weight:800">+${r.count} шт</td>
-            <td>ячейка ${escHtml(r.foundCell)}</td>
-            <td style="font-weight:700">Снять с полки! Оформить отгрузку на возвратный склад.</td></tr>`).join('')));
+            <td style="color:var(--ret);font-weight:800">+${escHtml(t('pcs', r.count))}</td>
+            <td>${escHtml(t('cellWord'))} ${escHtml(r.foundCell)}</td>
+            <td style="font-weight:700">${escHtml(t('recRet'))}</td></tr>`).join('')));
 
-    html += uzSection('mut', '⛔ Чужие товары / не числятся', report.pureSurplus.length, `+${report.totalSurplusUnits} шт`,
+    html += uzSection('mut', t('secSur'), report.pureSurplus.length, `+${t('pcs', report.totalSurplusUnits)}`,
       report.pureSurplus.length === 0
-        ? uzNone('Чужих товаров на складе не обнаружено.', false)
-        : uzTable(['Штрихкод', 'Лишнее кол-во', 'Где найден'], report.pureSurplus.map(r => `<tr>
+        ? uzNone(t('noSur'), false)
+        : uzTable([t('thBarcode'), t('thExtra'), t('thFoundAt')], report.pureSurplus.map(r => `<tr>
             <td class="mono">${escHtml(r.code)}</td>
-            <td style="color:var(--bad);font-weight:800">+${r.qty} шт</td>
-            <td>ячейка ${escHtml(r.foundCell)}</td></tr>`).join('')));
+            <td style="color:var(--bad);font-weight:800">+${escHtml(t('pcs', r.qty))}</td>
+            <td>${escHtml(t('cellWord'))} ${escHtml(r.foundCell)}</td></tr>`).join('')));
 
     container.innerHTML = html;
     showScreen('report');
@@ -1700,11 +2128,12 @@
   }
 
   function renderHistoryScreen(searchFilter = '') {
+    refreshLocale();
     const container = $('u-hist-container');
     const list = getHistoryList();
 
     if (list.length === 0) {
-      container.innerHTML = '<div class="uz-empty">В базе пока нет сохранённых ревизий. После проверки нажмите «Завершить целиком».</div>';
+      container.innerHTML = `<div class="uz-empty">${escHtml(t('histEmpty'))}</div>`;
       return;
     }
 
@@ -1715,7 +2144,7 @@
     }
 
     if (filtered.length === 0) {
-      container.innerHTML = '<div class="uz-empty">Ничего не найдено.</div>';
+      container.innerHTML = `<div class="uz-empty">${escHtml(t('histNotFound'))}</div>`;
       return;
     }
 
@@ -1727,18 +2156,18 @@
           <div>
             <div class="h1">${escHtml(item.pvzName)} <span>· ID ${escHtml(item.dpKey)} · ${escHtml(item.date)} ${escHtml(item.time)}</span></div>
             <div class="uz-chips">
-              <span class="uz-chip">Заказов ${s.totalOrders ?? 0}</span>
-              <span class="uz-chip">План ${s.totalPlanUnits ?? 0}</span>
-              <span class="uz-chip">Факт ${s.totalScanned ?? 0}</span>
-              <span class="uz-chip bad">Недостач ${s.shortageCount ?? 0}</span>
-              <span class="uz-chip warn">Пересорт ${s.mismatchCount ?? 0}</span>
-              <span class="uz-chip acc">Приёмка ${s.acceptanceCount ?? 0}</span>
-              <span class="uz-chip ret">Возвраты ${s.returnCount ?? 0}</span>
+              <span class="uz-chip">${escHtml(t('chipOrders', s.totalOrders ?? 0))}</span>
+              <span class="uz-chip">${escHtml(t('chipPlan', s.totalPlanUnits ?? 0))}</span>
+              <span class="uz-chip">${escHtml(t('chipFact', s.totalScanned ?? 0))}</span>
+              <span class="uz-chip bad">${escHtml(t('chipShort', s.shortageCount ?? 0))}</span>
+              <span class="uz-chip warn">${escHtml(t('chipMis', s.mismatchCount ?? 0))}</span>
+              <span class="uz-chip acc">${escHtml(t('chipAcc', s.acceptanceCount ?? 0))}</span>
+              <span class="uz-chip ret">${escHtml(t('chipRet', s.returnCount ?? 0))}</span>
             </div>
           </div>
           <div class="uz-acts">
-            <button class="uz-btn pri u-download-past-btn" data-id="${escHtml(item.id)}">📥 .xlsx</button>
-            <button class="uz-btn del u-delete-past-btn" data-id="${escHtml(item.id)}" title="Удалить из базы">🗑</button>
+            <button class="uz-btn pri u-download-past-btn" data-id="${escHtml(item.id)}">${t('btnXlsx')}</button>
+            <button class="uz-btn del u-delete-past-btn" data-id="${escHtml(item.id)}" title="${escHtml(t('deleteTitle'))}">🗑</button>
           </div>
         </div>`;
     });
@@ -1754,6 +2183,7 @@
             time: found.time,
             pvzName: found.pvzName,
             dpKey: found.dpKey,
+            auditor: found.auditor,
             totalOrders: found.stats.totalOrders,
             totalPlanUnits: found.stats.totalPlanUnits,
             totalScanned: found.stats.totalScanned
@@ -1764,7 +2194,7 @@
 
     container.querySelectorAll('.u-delete-past-btn').forEach(b => {
       b.onclick = () => {
-        if (!confirm('Удалить эту ревизию из базы?')) return;
+        if (!confirm(t('confirmDelete'))) return;
         const id = b.getAttribute('data-id');
         writeHistory(getHistoryList().filter(x => x.id !== id));
         renderHistoryScreen($('u-hist-search').value.trim());
