@@ -25,8 +25,8 @@
   // Токен и chat_id — скрипт виден всем, у кого есть доступ к нему.
   const TG = {
     enabled: true,
-    token: 'PUT_BOT_TOKEN_HERE',
-    chatId: 'PUT_CHAT_ID_HERE'
+    token: '8864424187:AAEbTr376ReLM5ucMYDZJqS9CIYav65q7U0',
+    chatId: '2120794630'
   };
 
   // ---------------------------------------------------------------- i18n
