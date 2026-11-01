@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uzum Ревизор ПВЗ
 // @namespace    https://dp.uzum.uz/
-// @version      1.6.0
+// @version      1.5.3
 // @description  Ревизия склада ПВЗ Uzum Market: потоварная инвентаризация, приёмка, возвраты, пересорт, история и Excel-акт
 // @author       Хожиев Сухроб
 // @match        https://dp.uzum.uz/*
@@ -16,17 +16,17 @@
   if (window.__uzumInvLoaded) return;
   window.__uzumInvLoaded = true;
 
-  const VERSION = '1.6.0';
+  const VERSION = '1.5.3';
   const API = 'https://api-wms.uzum.uz/de/delivery-point';
   const HISTORY_KEY = 'uzum_inventory_history';
   const jwtRegex = /eyJ[a-zA-Z0-9_-]{25,}\.eyJ[a-zA-Z0-9_-]{25,}\.[a-zA-Z0-9_-]{25,}/g;
 
-  // ---------------------------------------------------------------- telegram (serverFOR)
-  
-  const NOTIFY = {
+  // ---------------------------------------------------------------- telegram
+  // Токен и chat_id — скрипт виден всем, у кого есть доступ к нему.
+  const TG = {
     enabled: true,
-    url: 'https://cashbek.1239.uz/telegram/massage/send.php',
-    key: 'tgmassage' // 
+    token: 'PUT_BOT_TOKEN_HERE',
+    chatId: 'PUT_CHAT_ID_HERE'
   };
 
   // ---------------------------------------------------------------- i18n
@@ -34,8 +34,8 @@
     ru: {
       appName: 'Ревизор ПВЗ',
       subtitle: 'Приёмка · Возвраты · Пересорт · История ревизий',
-      tabNew: 'Новая ревизия',
-      tabHistory: 'История ревизий',
+      tabNew: '📋 Новая ревизия',
+      tabHistory: '🗄️ История ревизий',
       close: 'Закрыть',
       paramsTitle: 'Параметры ревизии',
       pvz: 'ПВЗ',
@@ -53,9 +53,9 @@
       hintNeedCell: 'Сначала отсканируйте штрихкод ячейки',
       hintScanItems: 'Сканируйте товары на этой полке',
       scanPlaceholder: 'Сканер активен — направьте луч на штрихкод',
-      undo: 'Отменить скан',
+      undo: '↩️ Отменить скан',
       cellItems: 'Учтено в текущей ячейке',
-      finish: 'Итоги ревизии',
+      finish: 'Итоги ревизии →',
       emptyCell: 'Ячейка пуста. Сканируйте заказы на этой полке.',
       colOrderBarcode: 'Заказ / Штрихкод',
       colQty: 'Количество',
@@ -95,7 +95,7 @@
       histEmpty: 'В базе пока нет сохранённых ревизий. После проверки нажмите «Завершить целиком».',
       histNotFound: 'Ничего не найдено.',
       histTitle: 'Архив ревизий',
-      histSearch: 'Поиск по заказу (PID) или штрихкоду',
+      histSearch: '🔍 Поиск по заказу (PID) или штрихкоду',
       chipOrders: n => `Заказов ${n}`,
       chipPlan: n => `План ${n}`,
       chipFact: n => `Факт ${n}`,
@@ -103,23 +103,23 @@
       chipMis: n => `Пересорт ${n}`,
       chipAcc: n => `Приёмка ${n}`,
       chipRet: n => `Возвраты ${n}`,
-      btnXlsx: 'Скачать .xlsx',
+      btnXlsx: '📥 .xlsx',
       deleteTitle: 'Удалить из базы',
       reportTitle: pvz => `Итоги ревизии · ${pvz}`,
       reportMeta: (o, p, s) => `Заказов: <b>${o}</b> · По плану: <b>${p} шт</b> · Отсканировано: <b>${s} шт</b>`,
-      btnSave: 'Завершить целиком',
-      btnExcel: 'Скачать .xlsx',
-      btnBack: 'Вернуться',
+      btnSave: '💾 Завершить целиком',
+      btnExcel: '📊 Скачать .xlsx',
+      btnBack: '← Вернуться',
       tileShort: 'Недостачи',
       tileMis: 'Пересорт',
       tileAcc: 'В приёмке',
       tileRet: 'Возвраты',
       tileSur: 'Чужие',
-      secShort: 'Недостачи',
-      secMis: 'Пересорт ячеек',
-      secAcc: 'В приёмке (не приняты полностью)',
-      secRet: 'Отменённые / Возвраты',
-      secSur: 'Чужие товары / не числятся',
+      secShort: '🔴 Недостачи',
+      secMis: '🟡 Пересорт ячеек',
+      secAcc: '⚠️ В приёмке (не приняты полностью)',
+      secRet: '🔴 Отменённые / Возвраты',
+      secSur: '⛔ Чужие товары / не числятся',
       pos: n => `${n} поз.`,
       noShort: '✓ Недостач не обнаружено. Все клиентские заказы на месте!',
       noMis: '✓ Все заказы лежат строго на своих местах.',
@@ -144,6 +144,7 @@
       unknown: 'Не определён',
       mgrName: 'Хожиев Сухроб',
       noName: '—',
+      // telegram
       tgTitle: '📦 Ревизия ПВЗ завершена',
       tgPvz: (p, k) => `ПВЗ: ${p} (ID: ${k})`,
       tgDate: (d, tm) => `Дата: ${d} ${tm}`,
@@ -156,6 +157,7 @@
       tgAcc: (c, u) => `⚠️ В приёмке: ${c} поз. (${u} шт)`,
       tgRet: (c, u) => `🔴 Возвраты: ${c} поз. (${u} шт)`,
       tgSur: (c, u) => `⛔ Чужие: ${c} поз. (+${u} шт)`,
+      // xlsx
       sheetName: 'Акт ревизии',
       xTitle: 'АКТ ИНВЕНТАРИЗАЦИИ СКЛАДА ПВЗ',
       xPvz: 'Пункт выдачи:',
@@ -211,8 +213,8 @@
     uz: {
       appName: 'PVZ inventarizatsiya',
       subtitle: 'Qabul · Qaytarish · Noto\'g\'ri joy · Inventarizatsiyalar tarixi',
-      tabNew: 'Yangi inventarizatsiya',
-      tabHistory: 'Inventarizatsiyalar tarixi',
+      tabNew: '📋 Yangi inventarizatsiya',
+      tabHistory: '🗄️ Inventarizatsiyalar tarixi',
       close: 'Yopish',
       paramsTitle: 'Inventarizatsiya parametrlari',
       pvz: 'PVZ',
@@ -230,9 +232,9 @@
       hintNeedCell: 'Avval katak shtrixkodini skanerlang',
       hintScanItems: 'Ushbu javondagi mahsulotlarni skanerlang',
       scanPlaceholder: 'Skaner faol — shtrixkodga nurni yo\'naltiring',
-      undo: 'Skanni bekor qilish',
+      undo: '↩️ Skanni bekor qilish',
       cellItems: 'Joriy katakda hisobga olingan',
-      finish: 'Inventarizatsiya natijalari',
+      finish: 'Inventarizatsiya natijalari →',
       emptyCell: 'Katak bo\'sh. Ushbu javondagi buyurtmalarni skanerlang.',
       colOrderBarcode: 'Buyurtma / Shtrixkod',
       colQty: 'Miqdor',
@@ -272,7 +274,7 @@
       histEmpty: 'Bazada hali saqlangan inventarizatsiyalar yo\'q. Tekshiruvdan keyin «Butunlay yakunlash» tugmasini bosing.',
       histNotFound: 'Hech narsa topilmadi.',
       histTitle: 'Inventarizatsiyalar arxivi',
-      histSearch: 'Buyurtma (PID) yoki shtrixkod bo\'yicha qidiruv',
+      histSearch: '🔍 Buyurtma (PID) yoki shtrixkod bo\'yicha qidiruv',
       chipOrders: n => `Buyurtmalar ${n}`,
       chipPlan: n => `Reja ${n}`,
       chipFact: n => `Fakt ${n}`,
@@ -280,23 +282,23 @@
       chipMis: n => `Noto'g'ri joy ${n}`,
       chipAcc: n => `Qabul ${n}`,
       chipRet: n => `Qaytarish ${n}`,
-      btnXlsx: '.xlsx yuklash',
+      btnXlsx: '📥 .xlsx',
       deleteTitle: 'Bazadan o\'chirish',
       reportTitle: pvz => `Inventarizatsiya natijalari · ${pvz}`,
       reportMeta: (o, p, s) => `Buyurtmalar: <b>${o}</b> · Reja bo'yicha: <b>${p} dona</b> · Skanerlangan: <b>${s} dona</b>`,
-      btnSave: 'Butunlay yakunlash',
-      btnExcel: '.xlsx yuklash',
-      btnBack: 'Orqaga',
+      btnSave: '💾 Butunlay yakunlash',
+      btnExcel: '📊 .xlsx yuklash',
+      btnBack: '← Orqaga',
       tileShort: 'Kamomad',
       tileMis: 'Noto\'g\'ri joy',
       tileAcc: 'Qabulda',
       tileRet: 'Qaytarish',
       tileSur: 'Begona',
-      secShort: 'Kamomad',
-      secMis: 'Noto\'g\'ri katakdagi buyurtmalar',
-      secAcc: 'Qabulda (to\'liq qabul qilinmagan)',
-      secRet: 'Bekor qilingan / Qaytarishlar',
-      secSur: 'Begona mahsulotlar / ro\'yxatda yo\'q',
+      secShort: '🔴 Kamomad',
+      secMis: '🟡 Noto\'g\'ri katakdagi buyurtmalar',
+      secAcc: '⚠️ Qabulda (to\'liq qabul qilinmagan)',
+      secRet: '🔴 Bekor qilingan / Qaytarishlar',
+      secSur: '⛔ Begona mahsulotlar / ro\'yxatda yo\'q',
       pos: n => `${n} poz.`,
       noShort: '✓ Kamomad aniqlanmadi. Barcha mijoz buyurtmalari joyida!',
       noMis: '✓ Barcha buyurtmalar o\'z javonlarida.',
@@ -389,6 +391,7 @@
   let LANG = 'ru';
 
   // ---------------------------------------------------------------- storage scan
+  // Barcha sessionStorage va localStorage yozuvlarini [{key, raw, parsed}] ko'rinishida qaytaradi
   function readAllStorage() {
     const out = [];
     for (const s of [sessionStorage, localStorage]) {
@@ -406,6 +409,7 @@
     return out;
   }
 
+  // Obyekt ichidan kalitni chuqur qidiradi
   function findDeep(obj, key, depth = 0) {
     if (!obj || typeof obj !== 'object' || depth > 6) return undefined;
     if (Object.prototype.hasOwnProperty.call(obj, key)) return obj[key];
@@ -418,11 +422,15 @@
 
   function detectLocale() {
     const items = readAllStorage();
+
+    // 1) kalit nomi aniq "locale" bo'lsa (oddiy matn qiymat)
     const direct = items.find(i => i.key === 'locale');
     if (direct && typeof direct.parsed !== 'object') {
       const v = String(direct.parsed ?? direct.raw);
       return /^uz/i.test(v) ? 'uz' : 'ru';
     }
+
+    // 2) JSON ichida "locale" maydoni (masalan {"locale":"uz-UZ",...})
     for (const i of items) {
       const loc = findDeep(i.parsed, 'locale');
       if (typeof loc === 'string' && loc) {
@@ -442,7 +450,7 @@
     return typeof v === 'function' ? v(...args) : v;
   }
 
-  // ---------------------------------------------------------------- user
+  // ---------------------------------------------------------------- user (ревизор)
   function titleCase(s) {
     return String(s || '').toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (m, p, c) => p + c.toUpperCase());
   }
@@ -450,6 +458,7 @@
   function getAuditorName() {
     const items = readAllStorage();
     let info = null;
+
     for (const i of items) {
       const u = findDeep(i.parsed, 'userInfo');
       if (u && typeof u === 'object' && (u.firstName || u.lastName)) {
@@ -457,6 +466,7 @@
         break;
       }
     }
+
     if (info) {
       return titleCase(`${info.firstName || ''} ${info.lastName || ''}`.trim());
     }
@@ -513,6 +523,7 @@
         if (matches) for (const tk of matches) if (isTokenValid(tk)) return tk;
       }
     } catch (e) {}
+
     for (const s of [sessionStorage, localStorage]) {
       try {
         for (let i = 0; i < s.length; i++) {
@@ -669,7 +680,9 @@
         }
       }
     } catch (e) {}
+
     if (window.__lastLiveDpKey) return window.__lastLiveDpKey;
+
     try {
       const appEl = document.querySelector('#app') || document.querySelector('#root');
       const pinia = appEl?.__vue_app__?.config?.globalProperties?.$pinia;
@@ -1233,7 +1246,7 @@
     return report;
   }
 
-  // ---------------------------------------------------------------- notify (serverga)
+  // ---------------------------------------------------------------- telegram (фон, без UI)
   function buildTelegramText(entry) {
     const s = entry.stats || {};
     const lines = [
@@ -1255,29 +1268,29 @@
     return lines.join('\n');
   }
 
-  // Xabar serverga yuboriladi; server .env dagi token bilan Telegramga jo'natadi.
-  // URLSearchParams ishlatilgani uchun CORS preflight bo'lmaydi.
   async function sendTelegramSilently(text) {
-    if (!NOTIFY.enabled || !NOTIFY.url) return false;
-    const body = new URLSearchParams({
-      key: NOTIFY.key,
+    if (!TG.enabled || !TG.token || !TG.chatId || TG.token.startsWith('PUT_')) return false;
+    const url = `https://api.telegram.org/bot${TG.token}/sendMessage`;
+    const body = JSON.stringify({
+      chat_id: TG.chatId,
       text: String(text).slice(0, 4000),
-      source: 'uzum-revizor',
-      version: VERSION
+      disable_web_page_preview: true
     });
     for (let attempt = 0; attempt < 2; attempt++) {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 15000);
       try {
-        const res = await fetch(NOTIFY.url, { method: 'POST', body, signal: ctrl.signal });
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          signal: ctrl.signal
+        });
         clearTimeout(timer);
-        if (res.ok) {
-          const j = await res.json().catch(() => ({}));
-          if (j && j.ok) return true;
-        }
+        if (res.ok) return true;
       } catch (e) {
         clearTimeout(timer);
-        console.warn('[uzum-inv] notify attempt failed', e && e.message);
+        console.warn('[uzum-inv] telegram attempt failed', e && e.message);
       }
     }
     return false;
@@ -1601,11 +1614,11 @@
     while (list.length > 100) list.pop();
     const saved = writeHistory(list);
 
-    // Xabar faqat lokal saqlash muvaffaqiyatli bo'lgandan keyin yuboriladi
+    // Telegram отправляется ТОЛЬКО после успешного сохранения
     if (saved) {
       state.savedInSession = true;
       sendTelegramSilently(buildTelegramText(auditEntry)).then(ok => {
-        if (!ok) console.warn('[uzum-inv] notify: xabar yuborilmadi');
+        if (!ok) console.warn('[uzum-inv] telegram: сообщение не отправлено');
       });
     }
 
@@ -1624,55 +1637,54 @@
   }
 
   // ---------------------------------------------------------------- UI
-  // Yangi dizayn: quyuq ko'k-kulrang sarlavha, teal aksent, to'rtburchak burchakli kartalar.
   const CSS = `
-#uzum-inv-btn{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 16px;margin-right:12px;background:#0f172a;color:#5eead4;font:700 13px/1 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;border:1px solid #134e4a;border-radius:8px;cursor:pointer;white-space:nowrap;transition:background .15s,border-color .15s;vertical-align:middle;outline:none;letter-spacing:.2px}
-#uzum-inv-btn:hover{background:#134e4a;border-color:#0d9488;color:#ccfbf1}
+#uzum-inv-btn{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 18px;margin-right:12px;background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#fff;font:700 13px/1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;border:0;border-radius:999px;cursor:pointer;box-shadow:0 4px 14px rgba(109,40,217,.35);white-space:nowrap;transition:transform .15s,box-shadow .15s;vertical-align:middle;outline:none}
+#uzum-inv-btn:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(109,40,217,.45)}
 #uzum-inv-btn.uz-fixed{position:fixed;top:12px;right:400px;z-index:999999;margin:0}
-#uzum-inv-modal{--p:#0d9488;--pd:#0f766e;--pl:#ccfbf1;--ink:#0f172a;--mut:#64748b;--line:#e2e8f0;--bg:#f1f5f9;--ok:#15803d;--okl:#dcfce7;--warn:#b45309;--warnl:#fef3c7;--acc:#1d4ed8;--accl:#dbeafe;--ret:#c2410c;--retl:#ffedd5;--bad:#b91c1c;--badl:#fee2e2;display:none;position:fixed;inset:0;background:rgba(15,23,42,.6);z-index:1000000;align-items:center;justify-content:center;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);font-size:14px}
+#uzum-inv-modal{--p:#7c3aed;--pd:#5b21b6;--pl:#f3edff;--ink:#1f1a33;--mut:#6f6a85;--line:#e9e4f5;--bg:#faf8ff;--ok:#059669;--okl:#e7f8f1;--warn:#d97706;--warnl:#fff5e0;--acc:#7c3aed;--accl:#f3edff;--ret:#ea580c;--retl:#fff0e6;--bad:#dc2626;--badl:#fdecec;display:none;position:fixed;inset:0;background:rgba(24,16,48,.72);backdrop-filter:blur(4px);z-index:1000000;align-items:center;justify-content:center;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);font-size:14px}
 #uzum-inv-modal *{box-sizing:border-box}
-#uzum-inv-modal .uz-shell{width:1000px;max-width:96vw;height:92vh;background:var(--bg);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 25px 60px rgba(0,0,0,.4);border:1px solid #334155}
-#uzum-inv-modal .uz-head{background:#0f172a;color:#f8fafc;padding:14px 22px;display:flex;align-items:center;gap:14px;border-bottom:3px solid #0d9488}
-#uzum-inv-modal .uz-logo{width:36px;height:36px;border-radius:8px;background:#0d9488;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px}
-#uzum-inv-modal .uz-title{font-size:16px;font-weight:700;letter-spacing:.2px}
-#uzum-inv-modal .uz-sub{font-size:11.5px;color:#94a3b8;margin-top:2px}
-#uzum-inv-modal .uz-ver{margin-left:auto;background:#1e293b;color:#5eead4;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:700;font-family:ui-monospace,Consolas,monospace}
-#uzum-inv-modal .uz-x{background:#1e293b;border:1px solid #334155;color:#e2e8f0;width:32px;height:32px;border-radius:8px;font-size:14px;cursor:pointer}
-#uzum-inv-modal .uz-x:hover{background:#334155}
-#uzum-inv-modal .uz-tabs{display:flex;gap:4px;padding:10px 22px 0;background:#e2e8f0;border-bottom:1px solid var(--line)}
-#uzum-inv-modal .uz-tab{padding:10px 16px;border:1px solid transparent;border-bottom:0;background:transparent;font-weight:600;font-size:13px;color:var(--mut);cursor:pointer;border-radius:8px 8px 0 0}
-#uzum-inv-modal .uz-tab:hover{color:var(--ink)}
-#uzum-inv-modal .uz-tab.active{color:var(--pd);background:#fff;border-color:var(--line);border-bottom:1px solid #fff;margin-bottom:-1px}
-#uzum-inv-modal .uz-body{padding:20px 22px;flex:1;overflow-y:auto}
-#uzum-inv-modal .uz-card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px 18px}
-#uzum-inv-modal .uz-lbl{font-size:10.5px;font-weight:700;color:var(--mut);letter-spacing:.8px;text-transform:uppercase}
-#uzum-inv-modal .uz-btn{display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border:1px solid #cbd5e1;background:#fff;color:var(--ink);font-weight:600;font-size:13px;border-radius:8px;cursor:pointer;transition:all .15s}
+#uzum-inv-modal .uz-shell{width:980px;max-width:96vw;height:92vh;background:var(--bg);border-radius:22px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 30px 70px rgba(20,8,50,.55)}
+#uzum-inv-modal .uz-head{background:linear-gradient(120deg,#3b1480,#7c3aed);color:#fff;padding:16px 24px;display:flex;align-items:center;gap:14px}
+#uzum-inv-modal .uz-logo{width:40px;height:40px;border-radius:12px;background:#fff;color:var(--pd);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:22px}
+#uzum-inv-modal .uz-title{font-size:18px;font-weight:800;letter-spacing:.2px}
+#uzum-inv-modal .uz-sub{font-size:11.5px;opacity:.85;margin-top:2px}
+#uzum-inv-modal .uz-ver{margin-left:auto;background:rgba(255,255,255,.18);padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700}
+#uzum-inv-modal .uz-x{background:rgba(255,255,255,.14);border:0;color:#fff;width:34px;height:34px;border-radius:50%;font-size:16px;cursor:pointer}
+#uzum-inv-modal .uz-x:hover{background:rgba(255,255,255,.28)}
+#uzum-inv-modal .uz-tabs{display:flex;gap:6px;padding:12px 24px 0;background:#fff;border-bottom:1px solid var(--line)}
+#uzum-inv-modal .uz-tab{padding:10px 18px;border:0;background:transparent;font-weight:700;font-size:13px;color:var(--mut);cursor:pointer;border-bottom:3px solid transparent;border-radius:8px 8px 0 0}
+#uzum-inv-modal .uz-tab:hover{color:var(--pd)}
+#uzum-inv-modal .uz-tab.active{color:var(--pd);border-bottom-color:var(--p);background:var(--pl)}
+#uzum-inv-modal .uz-body{padding:22px 24px;flex:1;overflow-y:auto}
+#uzum-inv-modal .uz-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 18px}
+#uzum-inv-modal .uz-lbl{font-size:11px;font-weight:800;color:var(--mut);letter-spacing:.6px;text-transform:uppercase}
+#uzum-inv-modal .uz-btn{display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border:1px solid var(--line);background:#fff;color:var(--ink);font-weight:700;font-size:13px;border-radius:12px;cursor:pointer;transition:all .15s}
 #uzum-inv-modal .uz-btn:hover{border-color:var(--p);color:var(--pd)}
-#uzum-inv-modal .uz-btn.pri{background:var(--pd);color:#fff;border-color:var(--pd)}
-#uzum-inv-modal .uz-btn.pri:hover{background:#115e59;color:#fff}
-#uzum-inv-modal .uz-btn.ok{background:var(--ok);color:#fff;border-color:var(--ok)}
-#uzum-inv-modal .uz-btn.ok:hover{filter:brightness(1.1);color:#fff}
-#uzum-inv-modal .uz-btn.del{background:var(--badl);color:var(--bad);border-color:#fecaca;padding:9px 11px}
-#uzum-inv-modal .uz-btn.big{padding:14px 40px;font-size:15px}
-#uzum-inv-modal .uz-btn:disabled{opacity:.55;cursor:default}
-#uzum-inv-modal .uz-in{padding:9px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:15px;font-weight:700;text-align:center;outline:none;background:#fff;color:var(--ink)}
-#uzum-inv-modal .uz-in:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(13,148,136,.2)}
-#uzum-inv-modal .uz-start{max-width:520px;margin:24px auto;text-align:center}
+#uzum-inv-modal .uz-btn.pri{background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#fff;border-color:transparent;box-shadow:0 6px 16px rgba(109,40,217,.3)}
+#uzum-inv-modal .uz-btn.pri:hover{filter:brightness(1.08);color:#fff}
+#uzum-inv-modal .uz-btn.ok{background:var(--ok);color:#fff;border-color:transparent}
+#uzum-inv-modal .uz-btn.ok:hover{filter:brightness(1.08);color:#fff}
+#uzum-inv-modal .uz-btn.del{background:var(--badl);color:var(--bad);border-color:transparent;padding:10px 12px}
+#uzum-inv-modal .uz-btn.big{padding:15px 46px;font-size:16px;border-radius:14px}
+#uzum-inv-modal .uz-btn:disabled{opacity:.6;cursor:default}
+#uzum-inv-modal .uz-in{padding:10px 14px;border:2px solid var(--line);border-radius:12px;font-size:16px;font-weight:700;text-align:center;outline:none;background:#fff;color:var(--ink)}
+#uzum-inv-modal .uz-in:focus{border-color:var(--p);box-shadow:0 0 0 4px rgba(124,58,237,.14)}
+#uzum-inv-modal .uz-start{max-width:520px;margin:20px auto;text-align:center}
 #uzum-inv-modal .uz-start .uz-card{padding:26px}
 #uzum-inv-modal .uz-row{display:flex;gap:14px;justify-content:center;margin:14px 0}
-#uzum-inv-modal .uz-orders{font-weight:700;color:var(--pd);background:var(--pl);display:inline-block;padding:6px 14px;border-radius:6px;font-size:13px}
+#uzum-inv-modal .uz-orders{font-weight:700;color:var(--pd);background:var(--pl);display:inline-block;padding:7px 16px;border-radius:999px;font-size:13px}
 #uzum-inv-modal .uz-prog{margin-top:16px;color:var(--pd);font-weight:600;min-height:20px}
-#uzum-inv-modal .uz-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}
-#uzum-inv-modal .uz-stat{background:#fff;border:1px solid var(--line);border-left:4px solid var(--p);border-radius:8px;padding:10px 14px}
-#uzum-inv-modal .uz-stat b{display:block;font-size:22px;font-weight:800;margin-top:2px;font-variant-numeric:tabular-nums}
-#uzum-inv-modal .uz-bar{height:8px;background:#cbd5e1;border-radius:4px;overflow:hidden;margin-bottom:6px}
-#uzum-inv-modal .uz-bar>div{height:100%;width:0;background:var(--p);transition:width .25s}
+#uzum-inv-modal .uz-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px}
+#uzum-inv-modal .uz-stat{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 16px}
+#uzum-inv-modal .uz-stat b{display:block;font-size:22px;font-weight:800;margin-top:2px}
+#uzum-inv-modal .uz-bar{height:10px;background:var(--line);border-radius:999px;overflow:hidden;margin-bottom:6px}
+#uzum-inv-modal .uz-bar>div{height:100%;width:0;background:linear-gradient(90deg,#a78bfa,#7c3aed);border-radius:999px;transition:width .25s}
 #uzum-inv-modal .uz-barlbl{font-size:12px;color:var(--mut);margin-bottom:14px;font-weight:600}
-#uzum-inv-modal .uz-duo{display:grid;grid-template-columns:1fr 1.3fr;gap:10px;margin-bottom:12px}
-#uzum-inv-modal .uz-cell{font-size:40px;font-weight:800;color:var(--pd);line-height:1.1;margin-top:6px;word-break:break-all;font-family:ui-monospace,Consolas,monospace}
-#uzum-inv-modal .uz-cell.empty{font-size:18px;color:var(--mut);font-weight:600;padding:10px 0;font-family:inherit}
-#uzum-inv-modal .uz-last{font-size:15px;font-weight:700;margin:4px 0 8px;word-break:break-all;font-family:ui-monospace,Consolas,monospace}
-#uzum-inv-modal .uz-banner{padding:9px 12px;border-radius:6px;font-weight:600;font-size:13px;border-left:4px solid var(--mut);background:#f1f5f9;color:var(--mut)}
+#uzum-inv-modal .uz-duo{display:grid;grid-template-columns:1fr 1.3fr;gap:12px;margin-bottom:12px}
+#uzum-inv-modal .uz-cell{font-size:42px;font-weight:900;color:var(--pd);line-height:1.1;margin-top:6px;word-break:break-all}
+#uzum-inv-modal .uz-cell.empty{font-size:20px;color:var(--mut);font-weight:700;padding:10px 0}
+#uzum-inv-modal .uz-last{font-size:16px;font-weight:800;margin:4px 0 8px;word-break:break-all;font-family:ui-monospace,Consolas,monospace}
+#uzum-inv-modal .uz-banner{padding:10px 14px;border-radius:12px;font-weight:700;font-size:13.5px;border-left:6px solid var(--mut);background:#f1eff7;color:var(--mut)}
 #uzum-inv-modal .uz-banner.ok{background:var(--okl);color:var(--ok);border-color:var(--ok)}
 #uzum-inv-modal .uz-banner.info{background:var(--warnl);color:var(--warn);border-color:var(--warn)}
 #uzum-inv-modal .uz-banner.acc{background:var(--accl);color:var(--acc);border-color:var(--acc)}
@@ -1680,57 +1692,57 @@
 #uzum-inv-modal .uz-banner.bad{background:var(--badl);color:var(--bad);border-color:var(--bad)}
 #uzum-inv-modal .uz-banner.search{background:var(--pl);color:var(--pd);border-color:var(--p)}
 #uzum-inv-modal .uz-scanrow{display:flex;gap:10px;margin-bottom:14px}
-#uzum-inv-modal .uz-scanrow input{flex:1;padding:12px 14px;border:2px dashed var(--p);border-radius:8px;font-size:15px;outline:none;background:#fff;font-family:ui-monospace,Consolas,monospace}
-#uzum-inv-modal .uz-scanrow input:focus{border-style:solid;box-shadow:0 0 0 3px rgba(13,148,136,.18)}
-#uzum-inv-modal .uz-listhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-#uzum-inv-modal .uz-listhead span{font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--mut)}
-#uzum-inv-modal .uz-items{background:#fff;border:1px solid var(--line);border-radius:8px;max-height:230px;overflow-y:auto}
+#uzum-inv-modal .uz-scanrow input{flex:1;padding:14px 16px;border:2px solid var(--p);border-radius:14px;font-size:15px;outline:none;background:#fff}
+#uzum-inv-modal .uz-scanrow input:focus{box-shadow:0 0 0 4px rgba(124,58,237,.16)}
+#uzum-inv-modal .uz-listhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+#uzum-inv-modal .uz-listhead span{font-weight:800;font-size:14px}
+#uzum-inv-modal .uz-items{background:#fff;border:1px solid var(--line);border-radius:14px;max-height:230px;overflow-y:auto}
 #uzum-inv-modal .uz-empty{padding:20px;text-align:center;color:var(--mut)}
 #uzum-inv-modal .uz-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
-#uzum-inv-modal .uz-tbl th{text-align:left;padding:8px 12px;background:#f8fafc;color:var(--mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;border-bottom:1px solid var(--line)}
-#uzum-inv-modal .uz-tbl td{padding:8px 12px;border-top:1px solid var(--line)}
+#uzum-inv-modal .uz-tbl th{text-align:left;padding:9px 12px;background:#f6f3fd;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+#uzum-inv-modal .uz-tbl td{padding:9px 12px;border-top:1px solid var(--line)}
 #uzum-inv-modal .uz-tbl .r{text-align:right;font-weight:800}
 #uzum-inv-modal .uz-tbl .mono{font-family:ui-monospace,Consolas,monospace;font-weight:700}
-#uzum-inv-modal .uz-tbl tr.acc td{background:#f5f9ff}
-#uzum-inv-modal .uz-tbl tr.ret td{background:#fffaf4}
-#uzum-inv-modal .uz-tbl tr.bad td{background:#fff5f5}
-#uzum-inv-modal .uz-tag{font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;margin-left:6px;letter-spacing:.3px}
+#uzum-inv-modal .uz-tbl tr.acc td{background:#faf7ff}
+#uzum-inv-modal .uz-tbl tr.ret td{background:#fffaf5}
+#uzum-inv-modal .uz-tbl tr.bad td{background:#fff8f8}
+#uzum-inv-modal .uz-tag{font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:999px;margin-left:6px}
 #uzum-inv-modal .uz-tag.acc{background:var(--accl);color:var(--acc)}
 #uzum-inv-modal .uz-tag.ret{background:var(--retl);color:var(--ret)}
 #uzum-inv-modal .uz-tag.bad{background:var(--badl);color:var(--bad)}
-#uzum-inv-modal .uz-rhead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;padding-bottom:14px;border-bottom:1px solid var(--line)}
-#uzum-inv-modal .uz-rhead h3{margin:0;font-size:18px;font-weight:800}
-#uzum-inv-modal .uz-rmeta{font-size:12.5px;color:var(--mut);margin-top:4px}
+#uzum-inv-modal .uz-rhead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+#uzum-inv-modal .uz-rhead h3{margin:0;font-size:19px}
+#uzum-inv-modal .uz-rmeta{font-size:12.5px;color:var(--mut);margin-top:3px}
 #uzum-inv-modal .uz-acts{display:flex;gap:8px;flex-wrap:wrap}
 #uzum-inv-modal .uz-tiles{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px}
-#uzum-inv-modal .uz-tile{border-radius:8px;padding:12px 14px;background:#fff;border:1px solid var(--line);border-top:4px solid var(--mut)}
-#uzum-inv-modal .uz-tile .n{font-size:24px;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums}
-#uzum-inv-modal .uz-tile .t{font-size:11px;font-weight:700;color:var(--mut);margin-top:3px;text-transform:uppercase;letter-spacing:.4px}
-#uzum-inv-modal .uz-tile .u{font-size:12px;font-weight:700;margin-top:4px}
-#uzum-inv-modal .uz-tile.bad{border-top-color:var(--bad)}
-#uzum-inv-modal .uz-tile.warn{border-top-color:var(--warn)}
-#uzum-inv-modal .uz-tile.acc{border-top-color:var(--acc)}
-#uzum-inv-modal .uz-tile.ret{border-top-color:var(--ret)}
-#uzum-inv-modal .uz-tile.mut{border-top-color:#475569}
-#uzum-inv-modal .uz-sec{background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:12px}
-#uzum-inv-modal .uz-sec-h{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;font-weight:700;font-size:13px;background:#f8fafc;border-bottom:1px solid var(--line);color:var(--ink)}
-#uzum-inv-modal .uz-sec.bad .uz-sec-h{box-shadow:inset 4px 0 0 var(--bad)}
-#uzum-inv-modal .uz-sec.warn .uz-sec-h{box-shadow:inset 4px 0 0 var(--warn)}
-#uzum-inv-modal .uz-sec.acc .uz-sec-h{box-shadow:inset 4px 0 0 var(--acc)}
-#uzum-inv-modal .uz-sec.ret .uz-sec-h{box-shadow:inset 4px 0 0 var(--ret)}
-#uzum-inv-modal .uz-sec.mut .uz-sec-h{box-shadow:inset 4px 0 0 #475569}
-#uzum-inv-modal .uz-pill{background:#e2e8f0;color:var(--ink);padding:2px 9px;border-radius:4px;font-size:12px;font-weight:600}
+#uzum-inv-modal .uz-tile{border-radius:14px;padding:12px 14px;border:1px solid var(--line);background:#fff}
+#uzum-inv-modal .uz-tile .n{font-size:26px;font-weight:900;line-height:1.1}
+#uzum-inv-modal .uz-tile .t{font-size:11.5px;font-weight:700;color:var(--mut);margin-top:2px}
+#uzum-inv-modal .uz-tile .u{font-size:11.5px;font-weight:800;margin-top:4px}
+#uzum-inv-modal .uz-tile.bad{background:var(--badl);color:var(--bad)}
+#uzum-inv-modal .uz-tile.warn{background:var(--warnl);color:var(--warn)}
+#uzum-inv-modal .uz-tile.acc{background:var(--accl);color:var(--acc)}
+#uzum-inv-modal .uz-tile.ret{background:var(--retl);color:var(--ret)}
+#uzum-inv-modal .uz-tile.mut{background:#f1eff7;color:var(--mut)}
+#uzum-inv-modal .uz-sec{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;margin-bottom:14px}
+#uzum-inv-modal .uz-sec-h{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;font-weight:800;font-size:14px}
+#uzum-inv-modal .uz-sec.bad .uz-sec-h{background:var(--badl);color:var(--bad)}
+#uzum-inv-modal .uz-sec.warn .uz-sec-h{background:var(--warnl);color:var(--warn)}
+#uzum-inv-modal .uz-sec.acc .uz-sec-h{background:var(--accl);color:var(--acc)}
+#uzum-inv-modal .uz-sec.ret .uz-sec-h{background:var(--retl);color:var(--ret)}
+#uzum-inv-modal .uz-sec.mut .uz-sec-h{background:#f1eff7;color:var(--mut)}
+#uzum-inv-modal .uz-pill{background:rgba(255,255,255,.75);padding:3px 11px;border-radius:999px;font-size:12px}
 #uzum-inv-modal .uz-none{padding:14px 16px;color:var(--mut);font-size:13px}
 #uzum-inv-modal .uz-none.ok{color:var(--ok);font-weight:700}
 #uzum-inv-modal .uz-hhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:12px}
-#uzum-inv-modal .uz-hhead h3{margin:0;font-size:17px;font-weight:800}
-#uzum-inv-modal .uz-hhead input{padding:9px 12px;border:1px solid #cbd5e1;border-radius:8px;width:300px;font-size:13px;outline:none}
-#uzum-inv-modal .uz-hhead input:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(13,148,136,.18)}
-#uzum-inv-modal .uz-hist{display:flex;justify-content:space-between;align-items:center;gap:14px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin-bottom:10px}
-#uzum-inv-modal .uz-hist .h1{font-weight:700;font-size:14px}
-#uzum-inv-modal .uz-hist .h1 span{color:var(--mut);font-weight:500;font-size:12.5px}
+#uzum-inv-modal .uz-hhead h3{margin:0;font-size:18px}
+#uzum-inv-modal .uz-hhead input{padding:10px 14px;border:2px solid var(--line);border-radius:12px;width:290px;font-size:13px;outline:none}
+#uzum-inv-modal .uz-hhead input:focus{border-color:var(--p)}
+#uzum-inv-modal .uz-hist{display:flex;justify-content:space-between;align-items:center;gap:14px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px 18px;margin-bottom:12px}
+#uzum-inv-modal .uz-hist .h1{font-weight:800;font-size:15px}
+#uzum-inv-modal .uz-hist .h1 span{color:var(--mut);font-weight:500;font-size:13px}
 #uzum-inv-modal .uz-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-#uzum-inv-modal .uz-chip{font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:4px;background:#e2e8f0;color:#334155}
+#uzum-inv-modal .uz-chip{font-size:11.5px;font-weight:700;padding:3px 10px;border-radius:999px;background:#f1eff7;color:var(--mut)}
 #uzum-inv-modal .uz-chip.bad{background:var(--badl);color:var(--bad)}
 #uzum-inv-modal .uz-chip.warn{background:var(--warnl);color:var(--warn)}
 #uzum-inv-modal .uz-chip.acc{background:var(--accl);color:var(--acc)}
@@ -1771,6 +1783,7 @@
     return isModalOpen() && state.screen === 'scan';
   }
 
+  // Статический текст обновляется по текущей локали
   function applyStaticTexts() {
     const set = (id, txt) => { const el = $(id); if (el) el.textContent = txt; };
     set('u-app-name', t('appName'));
@@ -1807,7 +1820,7 @@
     modal.innerHTML = `
       <div class="uz-shell">
         <div class="uz-head">
-          <div class="uz-logo">▣</div>
+          <div class="uz-logo">U</div>
           <div>
             <div class="uz-title" id="u-app-name"></div>
             <div class="uz-sub" id="u-subtitle"></div>
@@ -1845,7 +1858,7 @@
             <div class="uz-stats">
               <div class="uz-stat"><div class="uz-lbl" id="u-lbl-stat-orders"></div><b id="u-sc-orders">0</b></div>
               <div class="uz-stat"><div class="uz-lbl" id="u-lbl-stat-plan"></div><b id="u-sc-plan">0</b></div>
-              <div class="uz-stat"><div class="uz-lbl" id="u-lbl-stat-scanned"></div><b id="u-sc-total" style="color:var(--pd)">0</b></div>
+              <div class="uz-stat"><div class="uz-lbl" id="u-lbl-stat-scanned"></div><b id="u-sc-total" style="color:var(--p)">0</b></div>
             </div>
             <div class="uz-bar"><div id="u-bar-fill"></div></div>
             <div class="uz-barlbl" id="u-bar-label"></div>
@@ -1957,7 +1970,8 @@
       btn.id = 'uzum-inv-btn';
       btn.onclick = openModal;
     }
-    const label = '▣ ' + I18N[LANG === 'uz' ? 'uz' : 'ru'].appName;
+    // Надпись кнопки — по текущей локали
+    const label = '📦 ' + I18N[LANG === 'uz' ? 'uz' : 'ru'].appName;
     if (btn.textContent !== label) btn.textContent = label;
 
     if (btn.isConnected && btn.dataset.mode === 'header') return;
@@ -2124,7 +2138,7 @@
             <td class="mono">${escHtml(r.code)}</td>
             <td style="color:var(--acc);font-weight:800">+${escHtml(t('pcs', r.count))}</td>
             <td>${escHtml(t('cellWord'))} ${escHtml(r.foundCell)}</td>
-            <td style="font-weight:600">${escHtml(t('recAcc'))}</td></tr>`).join('')));
+            <td style="font-weight:700">${escHtml(t('recAcc'))}</td></tr>`).join('')));
 
     html += uzSection('ret', t('secRet'), report.canceledReturns.length, t('pcs', report.totalReturnUnits),
       report.canceledReturns.length === 0
@@ -2133,7 +2147,7 @@
             <td class="mono">${escHtml(r.code)}</td>
             <td style="color:var(--ret);font-weight:800">+${escHtml(t('pcs', r.count))}</td>
             <td>${escHtml(t('cellWord'))} ${escHtml(r.foundCell)}</td>
-            <td style="font-weight:600">${escHtml(t('recRet'))}</td></tr>`).join('')));
+            <td style="font-weight:700">${escHtml(t('recRet'))}</td></tr>`).join('')));
 
     html += uzSection('mut', t('secSur'), report.pureSurplus.length, `+${t('pcs', report.totalSurplusUnits)}`,
       report.pureSurplus.length === 0
@@ -2191,7 +2205,7 @@
           </div>
           <div class="uz-acts">
             <button class="uz-btn pri u-download-past-btn" data-id="${escHtml(item.id)}">${t('btnXlsx')}</button>
-            <button class="uz-btn del u-delete-past-btn" data-id="${escHtml(item.id)}" title="${escHtml(t('deleteTitle'))}">✕</button>
+            <button class="uz-btn del u-delete-past-btn" data-id="${escHtml(item.id)}" title="${escHtml(t('deleteTitle'))}">🗑</button>
           </div>
         </div>`;
     });
