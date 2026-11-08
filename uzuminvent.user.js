@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uzum Ревизор ПВЗ
 // @namespace    https://dp.uzum.uz/
-// @version      1.5.3
+// @version      1.5.9
 // @description  Ревизия склада ПВЗ Uzum Market: потоварная инвентаризация, приёмка, возвраты, пересорт, история и Excel-акт
 // @author       Хожиев Сухроб
 // @match        https://dp.uzum.uz/*
@@ -16,18 +16,25 @@
   if (window.__uzumInvLoaded) return;
   window.__uzumInvLoaded = true;
 
-  const VERSION = '1.5.3';
+  const VERSION = '1.5.9';
   const API = 'https://api-wms.uzum.uz/de/delivery-point';
+  const API_V3 = 'https://api-wms.uzum.uz/de/v3/delivery-point';
   const HISTORY_KEY = 'uzum_inventory_history';
   const jwtRegex = /eyJ[a-zA-Z0-9_-]{25,}\.eyJ[a-zA-Z0-9_-]{25,}\.[a-zA-Z0-9_-]{25,}/g;
 
   // ---------------------------------------------------------------- telegram
-  // Токен и chat_id — скрипт виден всем, у кого есть доступ к нему.
+  // Token ikki qismga bo'lingan: boshi va oxiri alohida yoziladi.
+  // Masalan: tokenHead = '8555855:', tokenTail = 'AAH...qolgan_qism'
   const TG = {
     enabled: true,
-    token: 'PUT_BOT_TOKEN_HERE',
+    tokenHead: 'PUT_TOKEN_HEAD',
+    tokenTail: 'PUT_TOKEN_TAIL',
     chatId: 'PUT_CHAT_ID_HERE'
   };
+
+  function getTgToken() {
+    return String(TG.tokenHead || '') + String(TG.tokenTail || '');
+  }
 
   // ---------------------------------------------------------------- i18n
   const I18N = {
@@ -144,7 +151,6 @@
       unknown: 'Не определён',
       mgrName: 'Хожиев Сухроб',
       noName: '—',
-      // telegram
       tgTitle: '📦 Ревизия ПВЗ завершена',
       tgPvz: (p, k) => `ПВЗ: ${p} (ID: ${k})`,
       tgDate: (d, tm) => `Дата: ${d} ${tm}`,
@@ -157,7 +163,6 @@
       tgAcc: (c, u) => `⚠️ В приёмке: ${c} поз. (${u} шт)`,
       tgRet: (c, u) => `🔴 Возвраты: ${c} поз. (${u} шт)`,
       tgSur: (c, u) => `⛔ Чужие: ${c} поз. (+${u} шт)`,
-      // xlsx
       sheetName: 'Акт ревизии',
       xTitle: 'АКТ ИНВЕНТАРИЗАЦИИ СКЛАДА ПВЗ',
       xPvz: 'Пункт выдачи:',
@@ -391,7 +396,6 @@
   let LANG = 'ru';
 
   // ---------------------------------------------------------------- storage scan
-  // Barcha sessionStorage va localStorage yozuvlarini [{key, raw, parsed}] ko'rinishida qaytaradi
   function readAllStorage() {
     const out = [];
     for (const s of [sessionStorage, localStorage]) {
@@ -409,7 +413,6 @@
     return out;
   }
 
-  // Obyekt ichidan kalitni chuqur qidiradi
   function findDeep(obj, key, depth = 0) {
     if (!obj || typeof obj !== 'object' || depth > 6) return undefined;
     if (Object.prototype.hasOwnProperty.call(obj, key)) return obj[key];
@@ -423,14 +426,12 @@
   function detectLocale() {
     const items = readAllStorage();
 
-    // 1) kalit nomi aniq "locale" bo'lsa (oddiy matn qiymat)
     const direct = items.find(i => i.key === 'locale');
     if (direct && typeof direct.parsed !== 'object') {
       const v = String(direct.parsed ?? direct.raw);
       return /^uz/i.test(v) ? 'uz' : 'ru';
     }
 
-    // 2) JSON ichida "locale" maydoni (masalan {"locale":"uz-UZ",...})
     for (const i of items) {
       const loc = findDeep(i.parsed, 'locale');
       if (typeof loc === 'string' && loc) {
@@ -497,6 +498,54 @@
   }
 
   function $(id) { return document.getElementById(id); }
+
+  // Buyurtma ID si: b2cOrderId, orderId yoki id (uchala shakl ham uchraydi)
+  function normOrderId(o) {
+    const v = o?.b2cOrderId ?? o?.orderId ?? o?.id;
+    return v == null ? '' : String(v);
+  }
+
+  // Ommaviy PID: b2cOrderPublicId yoki b2cPublicOrderId yoki orderNumber
+  function normPid(o) {
+    return String(o?.b2cOrderPublicId ?? o?.b2cPublicOrderId ?? o?.orderNumber ?? '').trim();
+  }
+
+  // Shtrixkod: b2cOrderBarcode yoki orderBarcode
+  function normBarcode(o) {
+    return String(o?.b2cOrderBarcode ?? o?.orderBarcode ?? '').trim();
+  }
+
+  // Mahsulot ro'yxatini so'rash mumkinmi (oddiy buyurtma: b2cOrderId bor, aerOrder emas)
+  function isItemable(h) {
+    return !!h && h.b2cOrderId != null && !h.aerOrder;
+  }
+
+  // Katak nomini API javobidagi maydonlardan izlaydi (asosiy: items[].cellBarcode, keyin cellInfo)
+  const CELL_KEYS = ['cellBarcode', 'cellKey', 'cell', 'cellInfo', 'cellCode', 'cellNumber', 'cellName'];
+  function extractCell(...srcs) {
+    for (const src of srcs) {
+      if (!src || typeof src !== 'object') continue;
+      for (const k of CELL_KEYS) {
+        let v = src[k];
+        if (v && typeof v === 'object') v = v.barcode || v.code || v.name || v.value || '';
+        if (v != null && String(v).trim() !== '') return String(v).trim();
+      }
+    }
+    return 'БЕЗ_ЯЧЕЙКИ';
+  }
+
+  function isNoCell(c) {
+    return !c || c === 'БЕЗ_ЯЧЕЙКИ' || c === 'null';
+  }
+
+  function cellLabel(c) {
+    return isNoCell(c) ? t('unknown') : c;
+  }
+
+  // Katak nomini solishtirish uchun: bo'shliqsiz, katta harf
+  function normCell(s) {
+    return String(s).replace(/\s+/g, '').toUpperCase();
+  }
 
   // ---------------------------------------------------------------- token
   function decodeJwt(token) {
@@ -674,7 +723,7 @@
       const resources = performance.getEntriesByType('resource');
       for (let i = resources.length - 1; i >= 0; i--) {
         const url = resources[i].name;
-        if (url.includes('/delivery-point/b2c-orders') && url.includes('dpKey=')) {
+        if (url.includes('/delivery-point/') && url.includes('dpKey=')) {
           const m = url.match(/[?&]dpKey=([^&]+)/);
           if (m && m[1]) return m[1];
         }
@@ -816,7 +865,7 @@
           const rawObj = Array.isArray(data) ? data[0] : (data.acceptance?.[0] || data.content?.[0] || data);
           result = {
             type: 'ACCEPTANCE',
-            orderId: rawObj?.b2cOrderId || rawObj?.orderId || rawObj?.externalId || '',
+            orderId: normOrderId(rawObj) || rawObj?.externalId || '',
             cargoPlace: rawObj?.cargoPlaceBarcode || rawObj?.barcode || '',
             statusText: t('statusAcceptance')
           };
@@ -827,7 +876,7 @@
           const rawObj = Array.isArray(data) ? data[0] : (data.shipment?.[0] || data.returns?.[0] || data.content?.[0] || data);
           result = {
             type: 'RETURN',
-            orderId: rawObj?.b2cOrderId || rawObj?.orderId || '',
+            orderId: normOrderId(rawObj) || '',
             cargoPlace: rawObj?.cargoPlaceBarcode || rawObj?.barcode || '',
             statusText: t('statusReturn')
           };
@@ -849,28 +898,30 @@
     if (!dpKey) throw new Error(t('errNoDpKey'));
     authHeaders();
 
+    // 1) Buyurtmalar ro'yxati (v3)
     let page = 0;
     const size = 100;
     const orderHeaders = [];
-    const seenHeaderIds = new Set();
+    const seenKeys = new Set();
 
     onProgress(t('loadList', dpKey));
 
     while (page < 500) {
       const data = await fetchJson(
-        `${API}/b2c-orders?page=${page}&size=${size}&status=DELIVERED%2CTEMP_DELIVERED&dpKey=${dpKey}`,
+        `${API_V3}/orders?page=${page}&size=${size}&status=DELIVERED%2CTEMP_DELIVERED&deliveryPointKey=${dpKey}&sortField=accepted_date&direction=ASC`,
         authHeaders(), 30000, 2
       );
       const content = Array.isArray(data) ? data : (data.content || []);
       content.forEach(o => {
-        const id = String(o.b2cOrderId);
-        if (!seenHeaderIds.has(id)) { seenHeaderIds.add(id); orderHeaders.push(o); }
+        const key = normOrderId(o);
+        if (!key || seenKeys.has(key)) return;
+        seenKeys.add(key);
+        orderHeaders.push(o);
       });
 
       let last;
       if (Array.isArray(data)) last = content.length < size;
       else if (typeof data.last === 'boolean') last = data.last;
-      else if (typeof data.totalPages === 'number') last = page + 1 >= data.totalPages;
       else last = content.length < size;
 
       page++;
@@ -882,105 +933,130 @@
     state.totalOrdersCount = orderHeaders.length;
 
     const headerMap = {};
-    orderHeaders.forEach(h => { headerMap[String(h.b2cOrderId)] = h; });
+    orderHeaders.forEach(h => { headerMap[normOrderId(h)] = h; });
+    const orderIds = orderHeaders.map(h => normOrderId(h));
 
+    // 2) Mahsulot tarkibi faqat oddiy buyurtmalar uchun so'raladi
+    const itemIds = orderIds.filter(id => isItemable(headerMap[id]));
     const chunkSize = 25;
-    const orderIds = orderHeaders.map(o => String(o.b2cOrderId));
+    const itemsMap = {};
     let failedOrders = 0;
 
-    for (let i = 0; i < orderIds.length; i += chunkSize) {
-      const slice = orderIds.slice(i, i + chunkSize);
-      onProgress(t('loadItems', Math.min(i + chunkSize, orderIds.length), orderIds.length));
-
-      let ordersWithItems = [];
+    for (let i = 0; i < itemIds.length; i += chunkSize) {
+      const slice = itemIds.slice(i, i + chunkSize);
+      onProgress(t('loadItems', Math.min(i + chunkSize, itemIds.length), itemIds.length));
       try {
         const r = await fetchJson(`${API}/b2c-orders/items?b2cOrderId=${slice.join(',')}`, authHeaders(), 30000, 2);
-        ordersWithItems = Array.isArray(r) ? r : (r.content || []);
+        const arr = Array.isArray(r) ? r : (r.content || []);
+        arr.forEach(o => {
+          const id = normOrderId(o);
+          if (id) itemsMap[id] = o;
+        });
       } catch (e) {
         if (e && e.isAccessError) throw e;
         failedOrders += slice.length;
       }
-
-      const itemsMap = {};
-      ordersWithItems.forEach(o => { itemsMap[String(o.b2cOrderId)] = o; });
-
-      slice.forEach(orderIdStr => {
-        const header = headerMap[orderIdStr] || {};
-        const withItems = itemsMap[orderIdStr] || {};
-
-        const pidStr = String(header.b2cOrderPublicId || withItems.b2cOrderPublicId || '').trim();
-        const expectedCell = String(header.cellBarcode || withItems.cellBarcode || 'БЕЗ_ЯЧЕЙКИ').trim();
-        const customer = header.customer || withItems.customer || {};
-
-        const uniq = new Set();
-        uniq.add(orderIdStr);
-        uniq.add(orderIdStr.padStart(10, '0'));
-        uniq.add(`10-${orderIdStr.padStart(10, '0')}-1`);
-        if (pidStr) uniq.add(pidStr);
-
-        const addCargo = (arr) => {
-          if (Array.isArray(arr)) {
-            arr.forEach(c => {
-              const code = typeof c === 'object' ? c?.barcode : c;
-              if (code) {
-                const s = String(code).trim();
-                uniq.add(s);
-                const m = s.match(/^10-(\d{10})-\d+$/);
-                if (m) uniq.add(String(parseInt(m[1], 10)));
-              }
-            });
-          }
-        };
-        addCargo(header.cargoPlaceBarcodes);
-        addCargo(header.cargoPlaces);
-        addCargo(withItems.cargoPlaceBarcodes);
-        addCargo(withItems.cargoPlaces);
-
-        const skuCodes = new Set();
-        const items = withItems.items || header.items || [];
-        let itemsQty = 0;
-        const itemSkus = [];
-
-        items.forEach(it => {
-          const qty = Number(it.amount) > 0 ? Number(it.amount) : 1;
-          itemsQty += qty;
-          const sku = String(it.skuBarcode || it.barcode || '').trim();
-          if (sku) {
-            skuCodes.add(sku);
-            itemSkus.push({ sku, qty, title: it.title || it.name || '' });
-          }
-          if (it.barcode) skuCodes.add(String(it.barcode).trim());
-          if (it.sellerBarcode) skuCodes.add(String(it.sellerBarcode).trim());
-          if (Array.isArray(it.barcodes)) it.barcodes.forEach(b => b && skuCodes.add(String(b).trim()));
-        });
-
-        if (itemsQty === 0) itemsQty = 1;
-
-        state.ordersMap[orderIdStr] = {
-          orderId: orderIdStr,
-          pid: pidStr,
-          expectedCell,
-          customer,
-          planQty: itemsQty,
-          itemSkus,
-          scannedCodes: new Set()
-        };
-        state.factGlobal[orderIdStr] = 0;
-
-        uniq.forEach(a => {
-          skuCodes.delete(a);
-          state.codeToOrderId[a] = orderIdStr;
-        });
-        skuCodes.forEach(s => {
-          if (!state.skuIndex[s]) state.skuIndex[s] = [];
-          state.skuIndex[s].push(orderIdStr);
-        });
-
-        if (!state.planCellUnits[expectedCell]) state.planCellUnits[expectedCell] = {};
-        state.planCellUnits[expectedCell][orderIdStr] = itemsQty;
-        state.totalPlanUnits += itemsQty;
-      });
     }
+
+    // 3) Har bir buyurtmani yig'ish
+    orderIds.forEach(orderIdStr => {
+      const header = headerMap[orderIdStr] || {};
+      const withItems = itemsMap[orderIdStr] || {};
+
+      const pidStr = normPid(header) || normPid(withItems);
+      const barcodeStr = normBarcode(header) || normBarcode(withItems);
+      const customer = header.customer || withItems.customer || {};
+
+      // Skaner o'qishi mumkin bo'lgan barcha variantlar
+      const uniq = new Set();
+      uniq.add(orderIdStr);
+      uniq.add(orderIdStr.padStart(10, '0'));
+      uniq.add(`10-${orderIdStr.padStart(10, '0')}-1`);
+      if (pidStr) uniq.add(pidStr);
+      if (barcodeStr) {
+        uniq.add(barcodeStr);
+        const m = barcodeStr.match(/^10-(\d{10})-\d+$/);
+        if (m) {
+          uniq.add(m[1]);
+          uniq.add(String(parseInt(m[1], 10)));
+        }
+      }
+
+      const addCargo = (arr) => {
+        if (Array.isArray(arr)) {
+          arr.forEach(c => {
+            const code = typeof c === 'object' ? c?.barcode : c;
+            if (code) {
+              const s = String(code).trim();
+              uniq.add(s);
+              const m = s.match(/^10-(\d{10})-\d+$/);
+              if (m) uniq.add(String(parseInt(m[1], 10)));
+            }
+          });
+        }
+      };
+      addCargo(header.cargoPlaceBarcodes);
+      addCargo(header.cargoPlaces);
+      addCargo(withItems.cargoPlaceBarcodes);
+      addCargo(withItems.cargoPlaces);
+
+      const skuCodes = new Set();
+      const items = withItems.items || header.items || [];
+      const cells = {};           // { "251": 2, "241": 1 }: har bir katakdagi reja soni
+      let itemsQty = 0;
+      const itemSkus = [];
+
+      items.forEach(it => {
+        const qty = Number(it.amount) > 0 ? Number(it.amount) : 1;
+        const cell = extractCell(it, withItems, header);
+        itemsQty += qty;
+        cells[cell] = (cells[cell] || 0) + qty;
+
+        const sku = String(it.skuBarcode || it.barcode || '').trim();
+        if (sku) {
+          skuCodes.add(sku);
+          itemSkus.push({ sku, qty, title: it.title || it.name || '' });
+        }
+        if (it.barcode) skuCodes.add(String(it.barcode).trim());
+        if (it.sellerBarcode) skuCodes.add(String(it.sellerBarcode).trim());
+        if (Array.isArray(it.barcodes)) it.barcodes.forEach(b => b && skuCodes.add(String(b).trim()));
+      });
+
+      // Items bo'sh bo'lsa (aerOrder yoki items yo'q): katak buyurtma darajasidan olinadi
+      if (itemsQty === 0) itemsQty = 1;
+      if (Object.keys(cells).length === 0) {
+        cells[extractCell(header, withItems)] = itemsQty;
+      }
+
+      const realCells = Object.keys(cells).filter(c => !isNoCell(c));
+
+      state.ordersMap[orderIdStr] = {
+        orderId: orderIdStr,
+        pid: pidStr || orderIdStr,
+        cells,
+        expectedCell: realCells.join(', ') || 'БЕЗ_ЯЧЕЙКИ',
+        customer,
+        planQty: itemsQty,
+        itemSkus,
+        scannedCodes: new Set()
+      };
+      state.factGlobal[orderIdStr] = 0;
+
+      uniq.forEach(a => {
+        skuCodes.delete(a);
+        state.codeToOrderId[a] = orderIdStr;
+      });
+      skuCodes.forEach(s => {
+        if (!state.skuIndex[s]) state.skuIndex[s] = [];
+        state.skuIndex[s].push(orderIdStr);
+      });
+
+      Object.entries(cells).forEach(([cell, qty]) => {
+        if (!state.planCellUnits[cell]) state.planCellUnits[cell] = {};
+        state.planCellUnits[cell][orderIdStr] = (state.planCellUnits[cell][orderIdStr] || 0) + qty;
+      });
+      state.totalPlanUnits += itemsQty;
+    });
 
     Object.keys(state.planCellUnits).forEach(c => { state.factCellUnits[c] = {}; });
 
@@ -1015,7 +1091,8 @@
     if (candidates && candidates.length) {
       const remaining = candidates.filter(id => (state.factGlobal[id] || 0) < state.ordersMap[id].planQty);
       if (remaining.length === 0) return { orderId: candidates[0], viaSku: true, full: true };
-      const onCell = remaining.find(id => state.ordersMap[id].expectedCell === cell);
+      // Avval shu katakda rejalashtirilgan buyurtmani tanlaydi
+      const onCell = remaining.find(id => state.ordersMap[id].cells[cell]);
       return { orderId: onCell || remaining[0], viaSku: true };
     }
 
@@ -1028,10 +1105,18 @@
     return null;
   }
 
+  // Skaner o'qigan katak nomini ro'yxatdagi asl nomi bilan solishtiradi
+  function canonicalCell(code) {
+    const k = Object.keys(state.planCellUnits).find(c => normCell(c) === normCell(code));
+    return k || code;
+  }
+
   function looksLikeCell(code) {
-    if (Object.prototype.hasOwnProperty.call(state.planCellUnits, code)) return true;
+    if (Object.keys(state.planCellUnits).some(c => normCell(c) === normCell(code))) return true;
     if (state.codeToOrderId[code] || state.skuIndex[code]) return false;
-    return code.length <= 5 && !code.startsWith('1000') && !code.includes('-');
+    if (/^10-\d{10}-\d+$/.test(code)) return false;
+    if (/^\d{8,}$/.test(code)) return false;
+    return code.length <= 12;
   }
 
   let scanChain = Promise.resolve();
@@ -1044,8 +1129,8 @@
     if (!code) return;
 
     if (looksLikeCell(code)) {
-      state.activeCell = code;
-      if (!state.factCellUnits[code]) state.factCellUnits[code] = {};
+      state.activeCell = canonicalCell(code);
+      if (!state.factCellUnits[state.activeCell]) state.factCellUnits[state.activeCell] = {};
       soundCell();
       updateScannerUI();
       return;
@@ -1184,6 +1269,7 @@
 
     const skuOf = (orderId, order) => order.itemSkus.length > 0 ? order.itemSkus[0].sku : `10-${orderId.padStart(10, '0')}-1`;
 
+    // 1) Kamomad: skanerlangan soni rejadan kam bo'lsa
     Object.entries(state.ordersMap).forEach(([orderId, order]) => {
       const factQty = state.factGlobal[orderId] || 0;
       if (factQty < order.planQty) {
@@ -1200,20 +1286,23 @@
       }
     });
 
+    // 2) Pereсort: har bir katakda rejadagidan ortiq topilgan mahsulot
     Object.entries(state.ordersMap).forEach(([orderId, order]) => {
-      const expCell = order.expectedCell;
-      if (!expCell || expCell === 'БЕЗ_ЯЧЕЙКИ' || expCell === 'null') return;
+      if (Object.keys(order.cells).every(isNoCell)) return;
 
       Object.keys(state.factCellUnits).forEach(actualCell => {
-        const qty = state.factCellUnits[actualCell][orderId];
-        if (actualCell !== expCell && qty > 0) {
-          report.totalMismatchUnits += qty;
+        const qty = state.factCellUnits[actualCell][orderId] || 0;
+        const expectedHere = order.cells[actualCell] || 0;
+        const extra = qty - expectedHere;
+
+        if (extra > 0) {
+          report.totalMismatchUnits += extra;
           report.mismatchedCells.push({
             orderId,
             pid: order.pid,
             sku: skuOf(orderId, order),
-            count: qty,
-            expectedCell: expCell,
+            count: extra,
+            expectedCell: order.expectedCell,
             actualCell,
             customer: safeCustomer(order.customer)
           });
@@ -1246,7 +1335,7 @@
     return report;
   }
 
-  // ---------------------------------------------------------------- telegram (фон, без UI)
+  // ---------------------------------------------------------------- telegram (fon, UI'siz)
   function buildTelegramText(entry) {
     const s = entry.stats || {};
     const lines = [
@@ -1269,8 +1358,9 @@
   }
 
   async function sendTelegramSilently(text) {
-    if (!TG.enabled || !TG.token || !TG.chatId || TG.token.startsWith('PUT_')) return false;
-    const url = `https://api.telegram.org/bot${TG.token}/sendMessage`;
+    const token = getTgToken();
+    if (!TG.enabled || !token || !TG.chatId || token.includes('PUT_') || String(TG.chatId).includes('PUT_')) return false;
+    const url = `https://api.telegram.org/bot${token}/sendMessage`;
     const body = JSON.stringify({
       chat_id: TG.chatId,
       text: String(text).slice(0, 4000),
@@ -1492,7 +1582,7 @@
     } else {
       rows.push(t('xHdrS1'));
       report.pureShortages.forEach((r, idx) => {
-        rows.push([idx + 1, r.pid || r.orderId, r.orderId, r.sku, `-${t('pcs', r.missingCount)}`, r.expectedCell || 'БЕЗ_ЯЧЕЙКИ', t('xNotFound'), fullName(r.customer), r.customer?.phone || t('noName')]);
+        rows.push([idx + 1, r.pid || r.orderId, r.orderId, r.sku, `-${t('pcs', r.missingCount)}`, cellLabel(r.expectedCell), t('xNotFound'), fullName(r.customer), r.customer?.phone || t('noName')]);
       });
     }
     rows.push([]);
@@ -1503,7 +1593,7 @@
     } else {
       rows.push(t('xHdrS2'));
       report.mismatchedCells.forEach((r, idx) => {
-        rows.push([idx + 1, r.pid || r.orderId, r.orderId, r.sku, t('pcs', r.count), r.expectedCell, r.actualCell, fullName(r.customer), t('xActS2', r.expectedCell)]);
+        rows.push([idx + 1, r.pid || r.orderId, r.orderId, r.sku, t('pcs', r.count), cellLabel(r.expectedCell), r.actualCell, fullName(r.customer), t('xActS2', r.actualCell)]);
       });
     }
     rows.push([]);
@@ -1614,11 +1704,11 @@
     while (list.length > 100) list.pop();
     const saved = writeHistory(list);
 
-    // Telegram отправляется ТОЛЬКО после успешного сохранения
+    // Telegram faqat muvaffaqiyatli saqlangandan keyin yuboriladi
     if (saved) {
       state.savedInSession = true;
       sendTelegramSilently(buildTelegramText(auditEntry)).then(ok => {
-        if (!ok) console.warn('[uzum-inv] telegram: сообщение не отправлено');
+        if (!ok) console.warn('[uzum-inv] telegram: xabar yuborilmadi');
       });
     }
 
@@ -1783,7 +1873,6 @@
     return isModalOpen() && state.screen === 'scan';
   }
 
-  // Статический текст обновляется по текущей локали
   function applyStaticTexts() {
     const set = (id, txt) => { const el = $(id); if (el) el.textContent = txt; };
     set('u-app-name', t('appName'));
@@ -1970,7 +2059,6 @@
       btn.id = 'uzum-inv-btn';
       btn.onclick = openModal;
     }
-    // Надпись кнопки — по текущей локали
     const label = '📦 ' + I18N[LANG === 'uz' ? 'uz' : 'ru'].appName;
     if (btn.textContent !== label) btn.textContent = label;
 
@@ -2119,7 +2207,7 @@
         : uzTable([t('thPid'), t('thMissing'), t('thShelf'), t('thClient')], report.pureShortages.map(r => `<tr>
             <td><b>№${escHtml(r.pid || r.orderId)}</b></td>
             <td style="color:var(--bad);font-weight:800">-${escHtml(t('pcs', r.missingCount))}</td>
-            <td>${escHtml(r.expectedCell)}</td>
+            <td>${escHtml(cellLabel(r.expectedCell))}</td>
             <td>${escHtml(r.customer?.firstName || '')} ${r.customer?.phone ? '(' + escHtml(r.customer.phone) + ')' : ''}</td></tr>`).join('')));
 
     html += uzSection('warn', t('secMis'), report.mismatchedCells.length, t('pcs', report.totalMismatchUnits),
@@ -2128,7 +2216,7 @@
         : uzTable([t('thPid'), t('thQty'), t('thPlanCell'), t('thActualCell')], report.mismatchedCells.map(r => `<tr>
             <td><b>${escHtml(r.pid || r.orderId)}</b></td>
             <td style="font-weight:800">${escHtml(t('pcs', r.count))}</td>
-            <td style="color:var(--bad);font-weight:800">${escHtml(r.expectedCell)}</td>
+            <td style="color:var(--bad);font-weight:800">${escHtml(cellLabel(r.expectedCell))}</td>
             <td style="color:var(--ok);font-weight:800">${escHtml(r.actualCell)}</td></tr>`).join('')));
 
     html += uzSection('acc', t('secAcc'), report.inAcceptance.length, t('pcs', report.totalAcceptanceUnits),
