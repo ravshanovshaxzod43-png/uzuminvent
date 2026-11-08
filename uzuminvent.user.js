@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uzum Ревизор ПВЗ
 // @namespace    https://dp.uzum.uz/
-// @version      1.5.9
+// @version      1.6.0
 // @description  Ревизия склада ПВЗ Uzum Market: потоварная инвентаризация, приёмка, возвраты, пересорт, история и Excel-акт
 // @author       Хожиев Сухроб
 // @match        https://dp.uzum.uz/*
@@ -16,7 +16,7 @@
   if (window.__uzumInvLoaded) return;
   window.__uzumInvLoaded = true;
 
-  const VERSION = '1.5.9';
+  const VERSION = '1.6.0';
   const API = 'https://api-wms.uzum.uz/de/delivery-point';
   const API_V3 = 'https://api-wms.uzum.uz/de/v3/delivery-point';
   const HISTORY_KEY = 'uzum_inventory_history';
@@ -41,8 +41,8 @@
     ru: {
       appName: 'Ревизор ПВЗ',
       subtitle: 'Приёмка · Возвраты · Пересорт · История ревизий',
-      tabNew: '📋 Новая ревизия',
-      tabHistory: '🗄️ История ревизий',
+      tabNew: 'Новая ревизия',
+      tabHistory: 'История ревизий',
       close: 'Закрыть',
       paramsTitle: 'Параметры ревизии',
       pvz: 'ПВЗ',
@@ -60,15 +60,16 @@
       hintNeedCell: 'Сначала отсканируйте штрихкод ячейки',
       hintScanItems: 'Сканируйте товары на этой полке',
       scanPlaceholder: 'Сканер активен — направьте луч на штрихкод',
-      undo: '↩️ Отменить скан',
+      undo: 'Отменить скан',
       cellItems: 'Учтено в текущей ячейке',
-      finish: 'Итоги ревизии →',
+      finish: 'Итоги ревизии',
       emptyCell: 'Ячейка пуста. Сканируйте заказы на этой полке.',
       colOrderBarcode: 'Заказ / Штрихкод',
       colQty: 'Количество',
       badgeAcc: 'В ПРИЁМКЕ',
       badgeRet: 'ОТМЕНЁН / ВОЗВРАТ',
       badgeForeign: 'ЧУЖОЙ ПВЗ',
+      badgeBank: 'UZUM BANK',
       orderLabel: n => `Заказ №${n}`,
       pcs: n => `${n} шт`,
       cellWord: 'ячейка',
@@ -102,7 +103,7 @@
       histEmpty: 'В базе пока нет сохранённых ревизий. После проверки нажмите «Завершить целиком».',
       histNotFound: 'Ничего не найдено.',
       histTitle: 'Архив ревизий',
-      histSearch: '🔍 Поиск по заказу (PID) или штрихкоду',
+      histSearch: 'Поиск по заказу (PID) или штрихкоду',
       chipOrders: n => `Заказов ${n}`,
       chipPlan: n => `План ${n}`,
       chipFact: n => `Факт ${n}`,
@@ -110,26 +111,26 @@
       chipMis: n => `Пересорт ${n}`,
       chipAcc: n => `Приёмка ${n}`,
       chipRet: n => `Возвраты ${n}`,
-      btnXlsx: '📥 .xlsx',
+      btnXlsx: 'Скачать .xlsx',
       deleteTitle: 'Удалить из базы',
       reportTitle: pvz => `Итоги ревизии · ${pvz}`,
       reportMeta: (o, p, s) => `Заказов: <b>${o}</b> · По плану: <b>${p} шт</b> · Отсканировано: <b>${s} шт</b>`,
-      btnSave: '💾 Завершить целиком',
-      btnExcel: '📊 Скачать .xlsx',
+      btnSave: 'Завершить целиком',
+      btnExcel: 'Скачать .xlsx',
       btnBack: '← Вернуться',
       tileShort: 'Недостачи',
       tileMis: 'Пересорт',
       tileAcc: 'В приёмке',
       tileRet: 'Возвраты',
       tileSur: 'Чужие',
-      secShort: '🔴 Недостачи',
-      secMis: '🟡 Пересорт ячеек',
-      secAcc: '⚠️ В приёмке (не приняты полностью)',
-      secRet: '🔴 Отменённые / Возвраты',
-      secSur: '⛔ Чужие товары / не числятся',
+      secShort: 'Недостачи',
+      secMis: 'Пересорт ячеек',
+      secAcc: 'В приёмке (не приняты полностью)',
+      secRet: 'Отменённые / Возвраты',
+      secSur: 'Чужие товары / не числятся',
       pos: n => `${n} поз.`,
-      noShort: '✓ Недостач не обнаружено. Все клиентские заказы на месте!',
-      noMis: '✓ Все заказы лежат строго на своих местах.',
+      noShort: 'Недостач не обнаружено. Все клиентские заказы на месте!',
+      noMis: 'Все заказы лежат строго на своих местах.',
       noAcc: 'Позиций в статусе приёмки на полках нет.',
       noRet: 'Отменённых заказов на полках не обнаружено.',
       noSur: 'Чужих товаров на складе не обнаружено.',
@@ -178,11 +179,11 @@
       xSumOrders: 'Всего клиентских заказов в плане WMS:',
       xSumPlan: 'Товаров по плану:',
       xSumScanned: 'Всего отсканировано товаров:',
-      xSumShort: '🔴 Чистая недостача (не найдены на складе):',
-      xSumMis: '🟡 Пересорт ячеек (лежат не на своих полках):',
-      xSumAcc: '⚠️ Заказы в приёмке (не приняты полностью):',
-      xSumRet: '🔴 Отмененные / Возвраты (к отгрузке на склад):',
-      xSumSur: '⛔ Чужие товары (не числятся за ПВЗ):',
+      xSumShort: 'Чистая недостача (не найдены на складе):',
+      xSumMis: 'Пересорт ячеек (лежат не на своих полках):',
+      xSumAcc: 'Заказы в приёмке (не приняты полностью):',
+      xSumRet: 'Отмененные / Возвраты (к отгрузке на склад):',
+      xSumSur: 'Чужие товары (не числятся за ПВЗ):',
       xStPlanToIssue: 'План к выдаче',
       xStPlanPcs: 'План штук',
       xStFact: 'Факт на складе',
@@ -191,11 +192,11 @@
       xStAcc: n => `${n} шт (Оставить в ячейке, провести приемку)`,
       xStRet: n => `${n} шт (Срочно снять с полки на склад)`,
       xStSur: n => `+${n} шт в коробку возвратов`,
-      xS1: '🔴 РАЗДЕЛ 1. НЕДОСТАЧИ (ЗАКАЗЫ, КОТОРЫХ НЕТ НА СКЛАДЕ)',
-      xS2: '🟡 РАЗДЕЛ 2. ПЕРЕСОРТ ЯЧЕЕК (ТОВАР НА СКЛАДЕ, НО НЕ НА СВОЕЙ ПОЛКЕ)',
-      xS3: '⚠️ РАЗДЕЛ 3. ТОВАРЫ В ПРИЁМКЕ (НЕ ПРИНЯТЫ ПОЛНОСТЬЮ — НЕ ОТПРАВЛЯТЬ НА СКЛАД!)',
-      xS4: '🔴 РАЗДЕЛ 4. ОТМЕНЕННЫЕ ЗАКАЗЫ И ВОЗВРАТЫ (СРОЧНО УБРАТЬ С ПОЛКИ И ОТПРАВИТЬ НА СКЛАД)',
-      xS5: '⛔ РАЗДЕЛ 5. ЧУЖИЕ ТОВАРЫ И НЕОПОЗНАННЫЕ ИЗЛИШКИ',
+      xS1: 'РАЗДЕЛ 1. НЕДОСТАЧИ (ЗАКАЗЫ, КОТОРЫХ НЕТ НА СКЛАДЕ)',
+      xS2: 'РАЗДЕЛ 2. ПЕРЕСОРТ ЯЧЕЕК (ТОВАР НА СКЛАДЕ, НО НЕ НА СВОЕЙ ПОЛКЕ)',
+      xS3: 'РАЗДЕЛ 3. ТОВАРЫ В ПРИЁМКЕ (НЕ ПРИНЯТЫ ПОЛНОСТЬЮ — НЕ ОТПРАВЛЯТЬ НА СКЛАД!)',
+      xS4: 'РАЗДЕЛ 4. ОТМЕНЕННЫЕ ЗАКАЗЫ И ВОЗВРАТЫ (СРОЧНО УБРАТЬ С ПОЛКИ И ОТПРАВИТЬ НА СКЛАД)',
+      xS5: 'РАЗДЕЛ 5. ЧУЖИЕ ТОВАРЫ И НЕОПОЗНАННЫЕ ИЗЛИШКИ',
       xOkShort: '✓ Недостач не обнаружено. Все клиентские заказы на месте!',
       xOkMis: '✓ Все найденные заказы лежат строго на своих местах.',
       xOkAcc: '✓ Товаров в статусе незавершенной приёмки не обнаружено.',
@@ -218,8 +219,8 @@
     uz: {
       appName: 'PVZ inventarizatsiya',
       subtitle: 'Qabul · Qaytarish · Noto\'g\'ri joy · Inventarizatsiyalar tarixi',
-      tabNew: '📋 Yangi inventarizatsiya',
-      tabHistory: '🗄️ Inventarizatsiyalar tarixi',
+      tabNew: 'Yangi inventarizatsiya',
+      tabHistory: 'Inventarizatsiyalar tarixi',
       close: 'Yopish',
       paramsTitle: 'Inventarizatsiya parametrlari',
       pvz: 'PVZ',
@@ -237,15 +238,16 @@
       hintNeedCell: 'Avval katak shtrixkodini skanerlang',
       hintScanItems: 'Ushbu javondagi mahsulotlarni skanerlang',
       scanPlaceholder: 'Skaner faol — shtrixkodga nurni yo\'naltiring',
-      undo: '↩️ Skanni bekor qilish',
+      undo: 'Skanni bekor qilish',
       cellItems: 'Joriy katakda hisobga olingan',
-      finish: 'Inventarizatsiya natijalari →',
+      finish: 'Inventarizatsiya natijalari',
       emptyCell: 'Katak bo\'sh. Ushbu javondagi buyurtmalarni skanerlang.',
       colOrderBarcode: 'Buyurtma / Shtrixkod',
       colQty: 'Miqdor',
       badgeAcc: 'QABULDA',
       badgeRet: 'BEKOR QILINGAN / QAYTARISH',
       badgeForeign: 'BOSHQA PVZ',
+      badgeBank: 'UZUM BANK',
       orderLabel: n => `Buyurtma №${n}`,
       pcs: n => `${n} dona`,
       cellWord: 'katak',
@@ -279,7 +281,7 @@
       histEmpty: 'Bazada hali saqlangan inventarizatsiyalar yo\'q. Tekshiruvdan keyin «Butunlay yakunlash» tugmasini bosing.',
       histNotFound: 'Hech narsa topilmadi.',
       histTitle: 'Inventarizatsiyalar arxivi',
-      histSearch: '🔍 Buyurtma (PID) yoki shtrixkod bo\'yicha qidiruv',
+      histSearch: 'Buyurtma (PID) yoki shtrixkod bo\'yicha qidiruv',
       chipOrders: n => `Buyurtmalar ${n}`,
       chipPlan: n => `Reja ${n}`,
       chipFact: n => `Fakt ${n}`,
@@ -287,26 +289,26 @@
       chipMis: n => `Noto'g'ri joy ${n}`,
       chipAcc: n => `Qabul ${n}`,
       chipRet: n => `Qaytarish ${n}`,
-      btnXlsx: '📥 .xlsx',
+      btnXlsx: 'Yuklab olish .xlsx',
       deleteTitle: 'Bazadan o\'chirish',
       reportTitle: pvz => `Inventarizatsiya natijalari · ${pvz}`,
       reportMeta: (o, p, s) => `Buyurtmalar: <b>${o}</b> · Reja bo'yicha: <b>${p} dona</b> · Skanerlangan: <b>${s} dona</b>`,
-      btnSave: '💾 Butunlay yakunlash',
-      btnExcel: '📊 .xlsx yuklash',
+      btnSave: 'Butunlay yakunlash',
+      btnExcel: 'Yuklab olish .xlsx',
       btnBack: '← Orqaga',
       tileShort: 'Kamomad',
       tileMis: 'Noto\'g\'ri joy',
       tileAcc: 'Qabulda',
       tileRet: 'Qaytarish',
       tileSur: 'Begona',
-      secShort: '🔴 Kamomad',
-      secMis: '🟡 Noto\'g\'ri katakdagi buyurtmalar',
-      secAcc: '⚠️ Qabulda (to\'liq qabul qilinmagan)',
-      secRet: '🔴 Bekor qilingan / Qaytarishlar',
-      secSur: '⛔ Begona mahsulotlar / ro\'yxatda yo\'q',
+      secShort: 'Kamomad',
+      secMis: 'Noto\'g\'ri katakdagi buyurtmalar',
+      secAcc: 'Qabulda (to\'liq qabul qilinmagan)',
+      secRet: 'Bekor qilingan / Qaytarishlar',
+      secSur: 'Begona mahsulotlar / ro\'yxatda yo\'q',
       pos: n => `${n} poz.`,
-      noShort: '✓ Kamomad aniqlanmadi. Barcha mijoz buyurtmalari joyida!',
-      noMis: '✓ Barcha buyurtmalar o\'z javonlarida.',
+      noShort: 'Kamomad aniqlanmadi. Barcha mijoz buyurtmalari joyida!',
+      noMis: 'Barcha buyurtmalar o\'z javonlarida.',
       noAcc: 'Javonlarda qabul holatidagi pozitsiyalar yo\'q.',
       noRet: 'Javonlarda bekor qilingan buyurtmalar topilmadi.',
       noSur: 'Omborda begona mahsulotlar topilmadi.',
@@ -355,11 +357,11 @@
       xSumOrders: 'WMS rejasidagi mijoz buyurtmalari:',
       xSumPlan: 'Reja bo\'yicha mahsulotlar:',
       xSumScanned: 'Jami skanerlangan mahsulotlar:',
-      xSumShort: '🔴 Sof kamomad (omborda topilmadi):',
-      xSumMis: '🟡 Noto\'g\'ri katak (boshqa javonda turibdi):',
-      xSumAcc: '⚠️ Qabuldagi buyurtmalar (to\'liq qabul qilinmagan):',
-      xSumRet: '🔴 Bekor qilingan / Qaytarishlar (omborga jo\'natish):',
-      xSumSur: '⛔ Begona mahsulotlar (PVZ ga tegishli emas):',
+      xSumShort: 'Sof kamomad (omborda topilmadi):',
+      xSumMis: 'Noto\'g\'ri katak (boshqa javonda turibdi):',
+      xSumAcc: 'Qabuldagi buyurtmalar (to\'liq qabul qilinmagan):',
+      xSumRet: 'Bekor qilingan / Qaytarishlar (omborga jo\'natish):',
+      xSumSur: 'Begona mahsulotlar (PVZ ga tegishli emas):',
       xStPlanToIssue: 'Berish rejasi',
       xStPlanPcs: 'Reja donalari',
       xStFact: 'Ombordagi fakt',
@@ -368,11 +370,11 @@
       xStAcc: n => `${n} dona (katakda qoldiring, qabulni o'tkazing)`,
       xStRet: n => `${n} dona (zudlik bilan javondan olib omborga)`,
       xStSur: n => `+${n} dona qaytarish qutisiga`,
-      xS1: '🔴 BO\'LIM 1. KAMOMAD (OMBORDA YO\'Q BUYURTMALAR)',
-      xS2: '🟡 BO\'LIM 2. KATAKLAR ALMASHUVI (OMBORDA, LEKIN BOSHQA JAVONDA)',
-      xS3: '⚠️ BO\'LIM 3. QABULDAGI MAHSULOTLAR (TO\'LIQ QABUL QILINMAGAN — OMBORGA YUBORMANG!)',
-      xS4: '🔴 BO\'LIM 4. BEKOR QILINGAN BUYURTMALAR VA QAYTARISHLAR (ZUDLIK BILAN JAVONDAN OLING)',
-      xS5: '⛔ BO\'LIM 5. BEGONA MAHSULOTLAR VA ANIQLANMAGAN ORTIQCHALAR',
+      xS1: 'BO\'LIM 1. KAMOMAD (OMBORDA YO\'Q BUYURTMALAR)',
+      xS2: 'BO\'LIM 2. KATAKLAR ALMASHUVI (OMBORDA, LEKIN BOSHQA JAVONDA)',
+      xS3: 'BO\'LIM 3. QABULDAGI MAHSULOTLAR (TO\'LIQ QABUL QILINMAGAN — OMBORGA YUBORMANG!)',
+      xS4: 'BO\'LIM 4. BEKOR QILINGAN BUYURTMALAR VA QAYTARISHLAR (ZUDLIK BILAN JAVONDAN OLING)',
+      xS5: 'BO\'LIM 5. BEGONA MAHSULOTLAR VA ANIQLANMAGAN ORTIQCHALAR',
       xOkShort: '✓ Kamomad aniqlanmadi. Barcha mijoz buyurtmalari joyida!',
       xOkMis: '✓ Topilgan buyurtmalar barchasi o\'z joyida.',
       xOkAcc: '✓ Tugallanmagan qabul holatidagi mahsulotlar topilmadi.',
@@ -499,13 +501,13 @@
 
   function $(id) { return document.getElementById(id); }
 
-  // Buyurtma ID si: b2cOrderId, orderId yoki id (uchala shakl ham uchraydi)
+  // Buyurtma ID si: b2cOrderId, orderId yoki id
   function normOrderId(o) {
     const v = o?.b2cOrderId ?? o?.orderId ?? o?.id;
     return v == null ? '' : String(v);
   }
 
-  // Ommaviy PID: b2cOrderPublicId yoki b2cPublicOrderId yoki orderNumber
+  // Ommaviy PID
   function normPid(o) {
     return String(o?.b2cOrderPublicId ?? o?.b2cPublicOrderId ?? o?.orderNumber ?? '').trim();
   }
@@ -515,12 +517,19 @@
     return String(o?.b2cOrderBarcode ?? o?.orderBarcode ?? '').trim();
   }
 
-  // Mahsulot ro'yxatini so'rash mumkinmi (oddiy buyurtma: b2cOrderId bor, aerOrder emas)
-  function isItemable(h) {
-    return !!h && h.b2cOrderId != null && !h.aerOrder;
+  // UZUM BANK buyurtmasimi (aerOrder yoki UZUM-BANK shtrixkodi)
+  function isBankOrder(o) {
+    if (!o) return false;
+    if (o.aerOrder === true) return true;
+    return normBarcode(o).toUpperCase().startsWith('UZUM-BANK');
   }
 
-  // Katak nomini API javobidagi maydonlardan izlaydi (asosiy: items[].cellBarcode, keyin cellInfo)
+  // Mahsulot ro'yxatini so'rash mumkinmi (oddiy buyurtma)
+  function isItemable(h) {
+    return !!h && h.b2cOrderId != null && !isBankOrder(h);
+  }
+
+  // Katak nomini API javobidagi maydonlardan izlaydi
   const CELL_KEYS = ['cellBarcode', 'cellKey', 'cell', 'cellInfo', 'cellCode', 'cellNumber', 'cellName'];
   function extractCell(...srcs) {
     for (const src of srcs) {
@@ -545,6 +554,19 @@
   // Katak nomini solishtirish uchun: bo'shliqsiz, katta harf
   function normCell(s) {
     return String(s).replace(/\s+/g, '').toUpperCase();
+  }
+
+  // Hisobot uchun PID matni (UZUM BANK bo'lsa belgi bilan)
+  function pidText(r) {
+    const base = r.pid || r.orderId;
+    return r.kind === 'BANK' ? `${base} (UZUM BANK)` : String(base);
+  }
+
+  function pidHtml(r) {
+    const base = escHtml(r.pid || r.orderId);
+    return r.kind === 'BANK'
+      ? `<b>${base}</b> <span class="rv-tag s-info">${escHtml(t('badgeBank'))}</span>`
+      : `<b>${base}</b>`;
   }
 
   // ---------------------------------------------------------------- token
@@ -592,7 +614,7 @@
   }
 
   function captureDpKeyFromUrl(url) {
-    if (url && url.includes('/delivery-point/b2c-orders')) {
+    if (url && url.includes('/delivery-point/')) {
       const m = url.match(/[?&]dpKey=([^&]+)/);
       if (m) window.__lastLiveDpKey = m[1];
     }
@@ -898,7 +920,7 @@
     if (!dpKey) throw new Error(t('errNoDpKey'));
     authHeaders();
 
-    // 1) Buyurtmalar ro'yxati (v3)
+    // 1) Buyurtmalar ro'yxati (UZUM BANK ham shu yerda)
     let page = 0;
     const size = 100;
     const orderHeaders = [];
@@ -962,16 +984,20 @@
     orderIds.forEach(orderIdStr => {
       const header = headerMap[orderIdStr] || {};
       const withItems = itemsMap[orderIdStr] || {};
+      const isBank = isBankOrder(header);
 
       const pidStr = normPid(header) || normPid(withItems);
       const barcodeStr = normBarcode(header) || normBarcode(withItems);
+      const pidShown = pidStr || (isBank ? barcodeStr : orderIdStr);
       const customer = header.customer || withItems.customer || {};
 
       // Skaner o'qishi mumkin bo'lgan barcha variantlar
       const uniq = new Set();
       uniq.add(orderIdStr);
-      uniq.add(orderIdStr.padStart(10, '0'));
-      uniq.add(`10-${orderIdStr.padStart(10, '0')}-1`);
+      if (!isBank) {
+        uniq.add(orderIdStr.padStart(10, '0'));
+        uniq.add(`10-${orderIdStr.padStart(10, '0')}-1`);
+      }
       if (pidStr) uniq.add(pidStr);
       if (barcodeStr) {
         uniq.add(barcodeStr);
@@ -1002,7 +1028,7 @@
 
       const skuCodes = new Set();
       const items = withItems.items || header.items || [];
-      const cells = {};           // { "251": 2, "241": 1 }: har bir katakdagi reja soni
+      const cells = {};
       let itemsQty = 0;
       const itemSkus = [];
 
@@ -1022,7 +1048,7 @@
         if (Array.isArray(it.barcodes)) it.barcodes.forEach(b => b && skuCodes.add(String(b).trim()));
       });
 
-      // Items bo'sh bo'lsa (aerOrder yoki items yo'q): katak buyurtma darajasidan olinadi
+      // UZUM BANK yoki items bo'sh: reja 1 dona, katak buyurtma darajasidan (cellInfo)
       if (itemsQty === 0) itemsQty = 1;
       if (Object.keys(cells).length === 0) {
         cells[extractCell(header, withItems)] = itemsQty;
@@ -1032,7 +1058,8 @@
 
       state.ordersMap[orderIdStr] = {
         orderId: orderIdStr,
-        pid: pidStr || orderIdStr,
+        pid: pidShown,
+        kind: isBank ? 'BANK' : 'ORDER',
         cells,
         expectedCell: realCells.join(', ') || 'БЕЗ_ЯЧЕЙКИ',
         customer,
@@ -1091,7 +1118,6 @@
     if (candidates && candidates.length) {
       const remaining = candidates.filter(id => (state.factGlobal[id] || 0) < state.ordersMap[id].planQty);
       if (remaining.length === 0) return { orderId: candidates[0], viaSku: true, full: true };
-      // Avval shu katakda rejalashtirilgan buyurtmani tanlaydi
       const onCell = remaining.find(id => state.ordersMap[id].cells[cell]);
       return { orderId: onCell || remaining[0], viaSku: true };
     }
@@ -1105,7 +1131,6 @@
     return null;
   }
 
-  // Skaner o'qigan katak nomini ro'yxatdagi asl nomi bilan solishtiradi
   function canonicalCell(code) {
     const k = Object.keys(state.planCellUnits).find(c => normCell(c) === normCell(code));
     return k || code;
@@ -1115,6 +1140,7 @@
     if (Object.keys(state.planCellUnits).some(c => normCell(c) === normCell(code))) return true;
     if (state.codeToOrderId[code] || state.skuIndex[code]) return false;
     if (/^10-\d{10}-\d+$/.test(code)) return false;
+    if (/^UZUM-BANK-/i.test(code)) return false;
     if (/^\d{8,}$/.test(code)) return false;
     return code.length <= 12;
   }
@@ -1269,7 +1295,7 @@
 
     const skuOf = (orderId, order) => order.itemSkus.length > 0 ? order.itemSkus[0].sku : `10-${orderId.padStart(10, '0')}-1`;
 
-    // 1) Kamomad: skanerlangan soni rejadan kam bo'lsa
+    // 1) Kamomad
     Object.entries(state.ordersMap).forEach(([orderId, order]) => {
       const factQty = state.factGlobal[orderId] || 0;
       if (factQty < order.planQty) {
@@ -1278,6 +1304,7 @@
         report.pureShortages.push({
           orderId,
           pid: order.pid,
+          kind: order.kind,
           sku: skuOf(orderId, order),
           missingCount: diff,
           expectedCell: order.expectedCell,
@@ -1286,7 +1313,7 @@
       }
     });
 
-    // 2) Pereсort: har bir katakda rejadagidan ortiq topilgan mahsulot
+    // 2) Pereсort: rejadagidan ortiq topilgan qism
     Object.entries(state.ordersMap).forEach(([orderId, order]) => {
       if (Object.keys(order.cells).every(isNoCell)) return;
 
@@ -1300,6 +1327,7 @@
           report.mismatchedCells.push({
             orderId,
             pid: order.pid,
+            kind: order.kind,
             sku: skuOf(orderId, order),
             count: extra,
             expectedCell: order.expectedCell,
@@ -1582,7 +1610,7 @@
     } else {
       rows.push(t('xHdrS1'));
       report.pureShortages.forEach((r, idx) => {
-        rows.push([idx + 1, r.pid || r.orderId, r.orderId, r.sku, `-${t('pcs', r.missingCount)}`, cellLabel(r.expectedCell), t('xNotFound'), fullName(r.customer), r.customer?.phone || t('noName')]);
+        rows.push([idx + 1, pidText(r), r.orderId, r.sku, `-${t('pcs', r.missingCount)}`, cellLabel(r.expectedCell), t('xNotFound'), fullName(r.customer), r.customer?.phone || t('noName')]);
       });
     }
     rows.push([]);
@@ -1593,7 +1621,7 @@
     } else {
       rows.push(t('xHdrS2'));
       report.mismatchedCells.forEach((r, idx) => {
-        rows.push([idx + 1, r.pid || r.orderId, r.orderId, r.sku, t('pcs', r.count), cellLabel(r.expectedCell), r.actualCell, fullName(r.customer), t('xActS2', r.actualCell)]);
+        rows.push([idx + 1, pidText(r), r.orderId, r.sku, t('pcs', r.count), cellLabel(r.expectedCell), r.actualCell, fullName(r.customer), t('xActS2', r.actualCell)]);
       });
     }
     rows.push([]);
@@ -1630,7 +1658,7 @@
       });
     }
 
-    const colWidths = [6, 22, 14, 24, 14, 18, 18, 28, 22];
+    const colWidths = [6, 26, 14, 24, 14, 18, 18, 28, 22];
     const blob = createRealXlsxBlob([{ name: t('sheetName'), rows, cols: colWidths }]);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1728,116 +1756,105 @@
 
   // ---------------------------------------------------------------- UI
   const CSS = `
-#uzum-inv-btn{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 18px;margin-right:12px;background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#fff;font:700 13px/1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;border:0;border-radius:999px;cursor:pointer;box-shadow:0 4px 14px rgba(109,40,217,.35);white-space:nowrap;transition:transform .15s,box-shadow .15s;vertical-align:middle;outline:none}
-#uzum-inv-btn:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(109,40,217,.45)}
+#uzum-inv-btn{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 16px;margin-right:12px;background:linear-gradient(135deg,#14b8a6,#0f766e);color:#fff;font:700 13px/1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;border:0;border-radius:10px;cursor:pointer;box-shadow:0 4px 14px rgba(20,184,166,.35);white-space:nowrap;transition:transform .15s,box-shadow .15s;vertical-align:middle;outline:none}
+#uzum-inv-btn:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(20,184,166,.45)}
 #uzum-inv-btn.uz-fixed{position:fixed;top:12px;right:400px;z-index:999999;margin:0}
-#uzum-inv-modal{--p:#7c3aed;--pd:#5b21b6;--pl:#f3edff;--ink:#1f1a33;--mut:#6f6a85;--line:#e9e4f5;--bg:#faf8ff;--ok:#059669;--okl:#e7f8f1;--warn:#d97706;--warnl:#fff5e0;--acc:#7c3aed;--accl:#f3edff;--ret:#ea580c;--retl:#fff0e6;--bad:#dc2626;--badl:#fdecec;display:none;position:fixed;inset:0;background:rgba(24,16,48,.72);backdrop-filter:blur(4px);z-index:1000000;align-items:center;justify-content:center;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);font-size:14px}
+#uzum-inv-modal{--bg:#0b1220;--panel:#111a2e;--card:#162240;--line:#24324f;--tx:#e6edf7;--muted:#8b9bb8;--teal:#2dd4bf;--tealD:#0f766e;--ok:#22c55e;--bad:#f43f5e;--warn:#f59e0b;--acc:#a78bfa;--ret:#fb923c;--info:#60a5fa;--mut:#64748b;display:none;position:fixed;inset:0;background:rgba(2,6,23,.78);backdrop-filter:blur(6px);z-index:1000000;align-items:center;justify-content:center;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--tx);font-size:14px}
 #uzum-inv-modal *{box-sizing:border-box}
-#uzum-inv-modal .uz-shell{width:980px;max-width:96vw;height:92vh;background:var(--bg);border-radius:22px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 30px 70px rgba(20,8,50,.55)}
-#uzum-inv-modal .uz-head{background:linear-gradient(120deg,#3b1480,#7c3aed);color:#fff;padding:16px 24px;display:flex;align-items:center;gap:14px}
-#uzum-inv-modal .uz-logo{width:40px;height:40px;border-radius:12px;background:#fff;color:var(--pd);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:22px}
-#uzum-inv-modal .uz-title{font-size:18px;font-weight:800;letter-spacing:.2px}
-#uzum-inv-modal .uz-sub{font-size:11.5px;opacity:.85;margin-top:2px}
-#uzum-inv-modal .uz-ver{margin-left:auto;background:rgba(255,255,255,.18);padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700}
-#uzum-inv-modal .uz-x{background:rgba(255,255,255,.14);border:0;color:#fff;width:34px;height:34px;border-radius:50%;font-size:16px;cursor:pointer}
-#uzum-inv-modal .uz-x:hover{background:rgba(255,255,255,.28)}
-#uzum-inv-modal .uz-tabs{display:flex;gap:6px;padding:12px 24px 0;background:#fff;border-bottom:1px solid var(--line)}
-#uzum-inv-modal .uz-tab{padding:10px 18px;border:0;background:transparent;font-weight:700;font-size:13px;color:var(--mut);cursor:pointer;border-bottom:3px solid transparent;border-radius:8px 8px 0 0}
-#uzum-inv-modal .uz-tab:hover{color:var(--pd)}
-#uzum-inv-modal .uz-tab.active{color:var(--pd);border-bottom-color:var(--p);background:var(--pl)}
-#uzum-inv-modal .uz-body{padding:22px 24px;flex:1;overflow-y:auto}
-#uzum-inv-modal .uz-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 18px}
-#uzum-inv-modal .uz-lbl{font-size:11px;font-weight:800;color:var(--mut);letter-spacing:.6px;text-transform:uppercase}
-#uzum-inv-modal .uz-btn{display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border:1px solid var(--line);background:#fff;color:var(--ink);font-weight:700;font-size:13px;border-radius:12px;cursor:pointer;transition:all .15s}
-#uzum-inv-modal .uz-btn:hover{border-color:var(--p);color:var(--pd)}
-#uzum-inv-modal .uz-btn.pri{background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#fff;border-color:transparent;box-shadow:0 6px 16px rgba(109,40,217,.3)}
-#uzum-inv-modal .uz-btn.pri:hover{filter:brightness(1.08);color:#fff}
-#uzum-inv-modal .uz-btn.ok{background:var(--ok);color:#fff;border-color:transparent}
-#uzum-inv-modal .uz-btn.ok:hover{filter:brightness(1.08);color:#fff}
-#uzum-inv-modal .uz-btn.del{background:var(--badl);color:var(--bad);border-color:transparent;padding:10px 12px}
-#uzum-inv-modal .uz-btn.big{padding:15px 46px;font-size:16px;border-radius:14px}
-#uzum-inv-modal .uz-btn:disabled{opacity:.6;cursor:default}
-#uzum-inv-modal .uz-in{padding:10px 14px;border:2px solid var(--line);border-radius:12px;font-size:16px;font-weight:700;text-align:center;outline:none;background:#fff;color:var(--ink)}
-#uzum-inv-modal .uz-in:focus{border-color:var(--p);box-shadow:0 0 0 4px rgba(124,58,237,.14)}
-#uzum-inv-modal .uz-start{max-width:520px;margin:20px auto;text-align:center}
-#uzum-inv-modal .uz-start .uz-card{padding:26px}
-#uzum-inv-modal .uz-row{display:flex;gap:14px;justify-content:center;margin:14px 0}
-#uzum-inv-modal .uz-orders{font-weight:700;color:var(--pd);background:var(--pl);display:inline-block;padding:7px 16px;border-radius:999px;font-size:13px}
-#uzum-inv-modal .uz-prog{margin-top:16px;color:var(--pd);font-weight:600;min-height:20px}
-#uzum-inv-modal .uz-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px}
-#uzum-inv-modal .uz-stat{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 16px}
-#uzum-inv-modal .uz-stat b{display:block;font-size:22px;font-weight:800;margin-top:2px}
-#uzum-inv-modal .uz-bar{height:10px;background:var(--line);border-radius:999px;overflow:hidden;margin-bottom:6px}
-#uzum-inv-modal .uz-bar>div{height:100%;width:0;background:linear-gradient(90deg,#a78bfa,#7c3aed);border-radius:999px;transition:width .25s}
-#uzum-inv-modal .uz-barlbl{font-size:12px;color:var(--mut);margin-bottom:14px;font-weight:600}
-#uzum-inv-modal .uz-duo{display:grid;grid-template-columns:1fr 1.3fr;gap:12px;margin-bottom:12px}
-#uzum-inv-modal .uz-cell{font-size:42px;font-weight:900;color:var(--pd);line-height:1.1;margin-top:6px;word-break:break-all}
-#uzum-inv-modal .uz-cell.empty{font-size:20px;color:var(--mut);font-weight:700;padding:10px 0}
-#uzum-inv-modal .uz-last{font-size:16px;font-weight:800;margin:4px 0 8px;word-break:break-all;font-family:ui-monospace,Consolas,monospace}
-#uzum-inv-modal .uz-banner{padding:10px 14px;border-radius:12px;font-weight:700;font-size:13.5px;border-left:6px solid var(--mut);background:#f1eff7;color:var(--mut)}
-#uzum-inv-modal .uz-banner.ok{background:var(--okl);color:var(--ok);border-color:var(--ok)}
-#uzum-inv-modal .uz-banner.info{background:var(--warnl);color:var(--warn);border-color:var(--warn)}
-#uzum-inv-modal .uz-banner.acc{background:var(--accl);color:var(--acc);border-color:var(--acc)}
-#uzum-inv-modal .uz-banner.ret{background:var(--retl);color:var(--ret);border-color:var(--ret)}
-#uzum-inv-modal .uz-banner.bad{background:var(--badl);color:var(--bad);border-color:var(--bad)}
-#uzum-inv-modal .uz-banner.search{background:var(--pl);color:var(--pd);border-color:var(--p)}
-#uzum-inv-modal .uz-scanrow{display:flex;gap:10px;margin-bottom:14px}
-#uzum-inv-modal .uz-scanrow input{flex:1;padding:14px 16px;border:2px solid var(--p);border-radius:14px;font-size:15px;outline:none;background:#fff}
-#uzum-inv-modal .uz-scanrow input:focus{box-shadow:0 0 0 4px rgba(124,58,237,.16)}
-#uzum-inv-modal .uz-listhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-#uzum-inv-modal .uz-listhead span{font-weight:800;font-size:14px}
-#uzum-inv-modal .uz-items{background:#fff;border:1px solid var(--line);border-radius:14px;max-height:230px;overflow-y:auto}
-#uzum-inv-modal .uz-empty{padding:20px;text-align:center;color:var(--mut)}
-#uzum-inv-modal .uz-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
-#uzum-inv-modal .uz-tbl th{text-align:left;padding:9px 12px;background:#f6f3fd;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
-#uzum-inv-modal .uz-tbl td{padding:9px 12px;border-top:1px solid var(--line)}
-#uzum-inv-modal .uz-tbl .r{text-align:right;font-weight:800}
-#uzum-inv-modal .uz-tbl .mono{font-family:ui-monospace,Consolas,monospace;font-weight:700}
-#uzum-inv-modal .uz-tbl tr.acc td{background:#faf7ff}
-#uzum-inv-modal .uz-tbl tr.ret td{background:#fffaf5}
-#uzum-inv-modal .uz-tbl tr.bad td{background:#fff8f8}
-#uzum-inv-modal .uz-tag{font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:999px;margin-left:6px}
-#uzum-inv-modal .uz-tag.acc{background:var(--accl);color:var(--acc)}
-#uzum-inv-modal .uz-tag.ret{background:var(--retl);color:var(--ret)}
-#uzum-inv-modal .uz-tag.bad{background:var(--badl);color:var(--bad)}
-#uzum-inv-modal .uz-rhead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
-#uzum-inv-modal .uz-rhead h3{margin:0;font-size:19px}
-#uzum-inv-modal .uz-rmeta{font-size:12.5px;color:var(--mut);margin-top:3px}
-#uzum-inv-modal .uz-acts{display:flex;gap:8px;flex-wrap:wrap}
-#uzum-inv-modal .uz-tiles{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:18px}
-#uzum-inv-modal .uz-tile{border-radius:14px;padding:12px 14px;border:1px solid var(--line);background:#fff}
-#uzum-inv-modal .uz-tile .n{font-size:26px;font-weight:900;line-height:1.1}
-#uzum-inv-modal .uz-tile .t{font-size:11.5px;font-weight:700;color:var(--mut);margin-top:2px}
-#uzum-inv-modal .uz-tile .u{font-size:11.5px;font-weight:800;margin-top:4px}
-#uzum-inv-modal .uz-tile.bad{background:var(--badl);color:var(--bad)}
-#uzum-inv-modal .uz-tile.warn{background:var(--warnl);color:var(--warn)}
-#uzum-inv-modal .uz-tile.acc{background:var(--accl);color:var(--acc)}
-#uzum-inv-modal .uz-tile.ret{background:var(--retl);color:var(--ret)}
-#uzum-inv-modal .uz-tile.mut{background:#f1eff7;color:var(--mut)}
-#uzum-inv-modal .uz-sec{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;margin-bottom:14px}
-#uzum-inv-modal .uz-sec-h{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;font-weight:800;font-size:14px}
-#uzum-inv-modal .uz-sec.bad .uz-sec-h{background:var(--badl);color:var(--bad)}
-#uzum-inv-modal .uz-sec.warn .uz-sec-h{background:var(--warnl);color:var(--warn)}
-#uzum-inv-modal .uz-sec.acc .uz-sec-h{background:var(--accl);color:var(--acc)}
-#uzum-inv-modal .uz-sec.ret .uz-sec-h{background:var(--retl);color:var(--ret)}
-#uzum-inv-modal .uz-sec.mut .uz-sec-h{background:#f1eff7;color:var(--mut)}
-#uzum-inv-modal .uz-pill{background:rgba(255,255,255,.75);padding:3px 11px;border-radius:999px;font-size:12px}
-#uzum-inv-modal .uz-none{padding:14px 16px;color:var(--mut);font-size:13px}
-#uzum-inv-modal .uz-none.ok{color:var(--ok);font-weight:700}
-#uzum-inv-modal .uz-hhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:12px}
-#uzum-inv-modal .uz-hhead h3{margin:0;font-size:18px}
-#uzum-inv-modal .uz-hhead input{padding:10px 14px;border:2px solid var(--line);border-radius:12px;width:290px;font-size:13px;outline:none}
-#uzum-inv-modal .uz-hhead input:focus{border-color:var(--p)}
-#uzum-inv-modal .uz-hist{display:flex;justify-content:space-between;align-items:center;gap:14px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px 18px;margin-bottom:12px}
-#uzum-inv-modal .uz-hist .h1{font-weight:800;font-size:15px}
-#uzum-inv-modal .uz-hist .h1 span{color:var(--mut);font-weight:500;font-size:13px}
-#uzum-inv-modal .uz-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-#uzum-inv-modal .uz-chip{font-size:11.5px;font-weight:700;padding:3px 10px;border-radius:999px;background:#f1eff7;color:var(--mut)}
-#uzum-inv-modal .uz-chip.bad{background:var(--badl);color:var(--bad)}
-#uzum-inv-modal .uz-chip.warn{background:var(--warnl);color:var(--warn)}
-#uzum-inv-modal .uz-chip.acc{background:var(--accl);color:var(--acc)}
-#uzum-inv-modal .uz-chip.ret{background:var(--retl);color:var(--ret)}
-@media (max-width:760px){#uzum-inv-modal .uz-tiles{grid-template-columns:repeat(2,1fr)}#uzum-inv-modal .uz-duo{grid-template-columns:1fr}}
+#uzum-inv-modal .rv-shell{width:1000px;max-width:96vw;height:92vh;background:var(--bg);border:1px solid var(--line);border-radius:16px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+#uzum-inv-modal .rv-top{display:flex;align-items:center;gap:14px;padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
+#uzum-inv-modal .rv-logo{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,var(--teal),var(--tealD));color:#042f2e;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:18px}
+#uzum-inv-modal .rv-title{font-size:16px;font-weight:800}
+#uzum-inv-modal .rv-sub{font-size:11.5px;color:var(--muted);margin-top:2px}
+#uzum-inv-modal .rv-ver{margin-left:auto;font-size:11px;font-weight:700;color:var(--teal);border:1px solid var(--tealD);padding:3px 9px;border-radius:999px}
+#uzum-inv-modal .rv-x{background:transparent;border:1px solid var(--line);color:var(--muted);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:14px}
+#uzum-inv-modal .rv-x:hover{color:var(--tx);border-color:var(--muted)}
+#uzum-inv-modal .rv-nav{display:flex;gap:6px;padding:10px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
+#uzum-inv-modal .rv-navbtn{padding:8px 14px;border:0;background:transparent;color:var(--muted);font-weight:700;font-size:13px;border-radius:8px;cursor:pointer}
+#uzum-inv-modal .rv-navbtn:hover{color:var(--tx)}
+#uzum-inv-modal .rv-navbtn.active{background:var(--card);color:var(--teal)}
+#uzum-inv-modal .rv-body{padding:20px;flex:1;overflow-y:auto}
+#uzum-inv-modal .rv-panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+#uzum-inv-modal .rv-label{font-size:10.5px;font-weight:800;color:var(--muted);letter-spacing:.8px;text-transform:uppercase}
+#uzum-inv-modal .rv-muted{color:var(--muted);font-size:12px}
+#uzum-inv-modal .rv-btn{display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border:1px solid var(--line);background:var(--card);color:var(--tx);font-weight:700;font-size:13px;border-radius:9px;cursor:pointer;transition:all .15s}
+#uzum-inv-modal .rv-btn:hover{border-color:var(--teal);color:var(--teal)}
+#uzum-inv-modal .rv-btn.teal{background:linear-gradient(135deg,var(--teal),var(--tealD));color:#042f2e;border-color:transparent}
+#uzum-inv-modal .rv-btn.teal:hover{filter:brightness(1.1);color:#042f2e}
+#uzum-inv-modal .rv-btn.green{background:var(--ok);color:#052e16;border-color:transparent}
+#uzum-inv-modal .rv-btn.green:hover{filter:brightness(1.08);color:#052e16}
+#uzum-inv-modal .rv-btn.danger{background:rgba(244,63,94,.12);color:var(--bad);border-color:transparent}
+#uzum-inv-modal .rv-btn.big{padding:14px 40px;font-size:15px;border-radius:12px}
+#uzum-inv-modal .rv-btn:disabled{opacity:.5;cursor:default}
+#uzum-inv-modal .rv-in{padding:10px 12px;border:1px solid var(--line);border-radius:9px;font-size:15px;font-weight:700;text-align:center;outline:none;background:var(--bg);color:var(--tx)}
+#uzum-inv-modal .rv-in:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(45,212,191,.15)}
+#uzum-inv-modal .rv-setup{max-width:540px;margin:30px auto}
+#uzum-inv-modal .rv-setup .rv-panel{padding:26px;text-align:center}
+#uzum-inv-modal .rv-fields{display:flex;gap:14px;justify-content:center;margin:18px 0 12px}
+#uzum-inv-modal .rv-field{display:flex;flex-direction:column;gap:6px;align-items:center}
+#uzum-inv-modal .rv-orders{display:inline-block;font-weight:700;color:var(--teal);background:rgba(45,212,191,.1);padding:6px 14px;border-radius:999px;font-size:12.5px}
+#uzum-inv-modal .rv-prog{margin-top:14px;color:var(--teal);font-weight:600;min-height:20px;font-size:13px}
+#uzum-inv-modal .rv-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px}
+#uzum-inv-modal .rv-kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+#uzum-inv-modal .rv-kpi b{display:block;font-size:22px;font-weight:800;margin-top:4px}
+#uzum-inv-modal .rv-meter{height:8px;background:var(--line);border-radius:999px;overflow:hidden}
+#uzum-inv-modal .rv-meter>div{height:100%;width:0;background:linear-gradient(90deg,var(--teal),var(--ok));border-radius:999px;transition:width .3s}
+#uzum-inv-modal .rv-meterlbl{font-size:12px;color:var(--muted);margin:6px 0 14px;font-weight:600}
+#uzum-inv-modal .rv-work{display:grid;grid-template-columns:1fr 1.4fr;gap:12px;margin-bottom:12px}
+#uzum-inv-modal .rv-cellbox{display:flex;flex-direction:column;justify-content:center;min-height:150px}
+#uzum-inv-modal .rv-cell{font-size:52px;font-weight:900;color:var(--teal);line-height:1.05;margin-top:8px;word-break:break-all}
+#uzum-inv-modal .rv-cell.empty{font-size:16px;color:var(--muted);font-weight:700}
+#uzum-inv-modal .rv-last{font-size:15px;font-weight:700;margin:6px 0 10px;word-break:break-all;font-family:ui-monospace,Consolas,monospace}
+#uzum-inv-modal .rv-hint{padding:10px 14px;border-radius:10px;font-weight:700;font-size:13px;border-left:4px solid var(--c,var(--muted));background:color-mix(in srgb,var(--c,var(--muted)) 14%,transparent);color:var(--c,var(--muted))}
+#uzum-inv-modal .rv-scanrow{display:flex;gap:10px;margin-bottom:14px}
+#uzum-inv-modal .rv-scanrow input{flex:1;padding:13px 16px;border:1px solid var(--teal);border-radius:11px;font-size:15px;outline:none;background:var(--panel);color:var(--tx)}
+#uzum-inv-modal .rv-scanrow input:focus{box-shadow:0 0 0 3px rgba(45,212,191,.2)}
+#uzum-inv-modal .rv-listhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+#uzum-inv-modal .rv-listhead span{font-weight:800;font-size:13.5px}
+#uzum-inv-modal .rv-list{background:var(--panel);border:1px solid var(--line);border-radius:12px;max-height:240px;overflow-y:auto}
+#uzum-inv-modal .rv-empty{padding:22px;text-align:center;color:var(--muted)}
+#uzum-inv-modal .rv-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+#uzum-inv-modal .rv-tbl th{text-align:left;padding:9px 12px;background:var(--card);color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;font-weight:800}
+#uzum-inv-modal .rv-tbl td{padding:9px 12px;border-top:1px solid var(--line)}
+#uzum-inv-modal .rv-tbl .rv-r{text-align:right;font-weight:800}
+#uzum-inv-modal .rv-tbl .mono{font-family:ui-monospace,Consolas,monospace;font-weight:700}
+#uzum-inv-modal .rv-tbl tr.s-acc td{background:rgba(167,139,250,.06)}
+#uzum-inv-modal .rv-tbl tr.s-ret td{background:rgba(251,146,60,.06)}
+#uzum-inv-modal .rv-tbl tr.s-bad td{background:rgba(244,63,94,.06)}
+#uzum-inv-modal .rv-tag{display:inline-block;font-size:10px;font-weight:800;padding:2px 8px;border-radius:6px;margin-left:6px;color:var(--c);background:color-mix(in srgb,var(--c) 15%,transparent)}
+#uzum-inv-modal .rv-rhead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+#uzum-inv-modal .rv-rhead h3{margin:0;font-size:18px;font-weight:800}
+#uzum-inv-modal .rv-rmeta{font-size:12.5px;color:var(--muted);margin-top:4px}
+#uzum-inv-modal .rv-acts{display:flex;gap:8px;flex-wrap:wrap}
+#uzum-inv-modal .rv-tiles{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}
+#uzum-inv-modal .rv-tile{border-radius:12px;padding:12px 14px;background:color-mix(in srgb,var(--c,var(--mut)) 12%,var(--panel));border:1px solid color-mix(in srgb,var(--c,var(--mut)) 30%,transparent);color:var(--c,var(--muted))}
+#uzum-inv-modal .rv-tile .n{font-size:24px;font-weight:900;line-height:1.1}
+#uzum-inv-modal .rv-tile .t{font-size:11px;font-weight:700;margin-top:3px;color:var(--muted)}
+#uzum-inv-modal .rv-tile .u{font-size:11.5px;font-weight:800;margin-top:4px;color:var(--c,var(--muted))}
+#uzum-inv-modal .rv-sec{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:12px;--c:var(--mut)}
+#uzum-inv-modal .rv-sec-h{display:flex;justify-content:space-between;align-items:center;padding:11px 16px;font-weight:800;font-size:13.5px;color:var(--c);background:color-mix(in srgb,var(--c) 10%,transparent);border-bottom:1px solid var(--line)}
+#uzum-inv-modal .rv-pill{font-size:11.5px;color:var(--muted);background:var(--bg);padding:3px 10px;border-radius:999px}
+#uzum-inv-modal .rv-none{padding:14px 16px;color:var(--muted);font-size:13px}
+#uzum-inv-modal .rv-none.ok{color:var(--ok);font-weight:700}
+#uzum-inv-modal .rv-hhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:12px}
+#uzum-inv-modal .rv-hhead h3{margin:0;font-size:17px;font-weight:800}
+#uzum-inv-modal .rv-hhead input{padding:9px 12px;border:1px solid var(--line);border-radius:9px;width:300px;font-size:13px;outline:none;background:var(--panel);color:var(--tx)}
+#uzum-inv-modal .rv-hhead input:focus{border-color:var(--teal)}
+#uzum-inv-modal .rv-hist{display:flex;justify-content:space-between;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:10px}
+#uzum-inv-modal .rv-hist .h1{font-weight:800;font-size:14.5px}
+#uzum-inv-modal .rv-hist .h1 span{color:var(--muted);font-weight:500;font-size:12.5px}
+#uzum-inv-modal .rv-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+#uzum-inv-modal .rv-chip{font-size:11px;font-weight:700;padding:3px 9px;border-radius:6px;color:var(--c,var(--muted));background:color-mix(in srgb,var(--c,var(--mut)) 14%,transparent)}
+#uzum-inv-modal .s-ok{--c:var(--ok)}
+#uzum-inv-modal .s-bad{--c:var(--bad)}
+#uzum-inv-modal .s-warn{--c:var(--warn)}
+#uzum-inv-modal .s-acc{--c:var(--acc)}
+#uzum-inv-modal .s-ret{--c:var(--ret)}
+#uzum-inv-modal .s-info{--c:var(--info)}
+#uzum-inv-modal .s-mut{--c:var(--mut)}
+#uzum-inv-modal .s-search{--c:var(--teal)}
+#uzum-inv-modal .rv-r.s-ok,#uzum-inv-modal .rv-r.s-bad,#uzum-inv-modal .rv-r.s-acc,#uzum-inv-modal .rv-r.s-ret{color:var(--c)}
+@media (max-width:760px){#uzum-inv-modal .rv-tiles{grid-template-columns:repeat(2,1fr)}#uzum-inv-modal .rv-work{grid-template-columns:1fr}#uzum-inv-modal .rv-kpis{grid-template-columns:1fr}}
 `;
 
   function ensureStyle() {
@@ -1907,85 +1924,85 @@
     const modal = document.createElement('div');
     modal.id = 'uzum-inv-modal';
     modal.innerHTML = `
-      <div class="uz-shell">
-        <div class="uz-head">
-          <div class="uz-logo">U</div>
+      <div class="rv-shell">
+        <header class="rv-top">
+          <div class="rv-logo">R</div>
           <div>
-            <div class="uz-title" id="u-app-name"></div>
-            <div class="uz-sub" id="u-subtitle"></div>
+            <div class="rv-title" id="u-app-name"></div>
+            <div class="rv-sub" id="u-subtitle"></div>
           </div>
-          <span class="uz-ver">v${VERSION}</span>
-          <button id="u-close" class="uz-x"></button>
-        </div>
+          <span class="rv-ver">v${VERSION}</span>
+          <button id="u-close" class="rv-x"></button>
+        </header>
 
-        <div class="uz-tabs">
-          <button id="u-tab-new" class="uz-tab active"></button>
-          <button id="u-tab-history" class="uz-tab"></button>
-        </div>
+        <nav class="rv-nav">
+          <button id="u-tab-new" class="rv-navbtn active"></button>
+          <button id="u-tab-history" class="rv-navbtn"></button>
+        </nav>
 
-        <div class="uz-body">
-          <div id="u-start-screen" class="uz-start">
-            <div class="uz-card">
-              <div class="uz-lbl" id="u-params-title"></div>
-              <div class="uz-row">
-                <div>
-                  <div class="uz-lbl" id="u-lbl-pvz" style="margin-bottom:6px"></div>
-                  <input type="text" id="u-pvz-name-input" class="uz-in" style="width:140px">
+        <main class="rv-body">
+          <section id="u-start-screen" class="rv-setup">
+            <div class="rv-panel">
+              <div class="rv-label" id="u-params-title"></div>
+              <div class="rv-fields">
+                <div class="rv-field">
+                  <div class="rv-label" id="u-lbl-pvz"></div>
+                  <input type="text" id="u-pvz-name-input" class="rv-in" style="width:150px">
                 </div>
-                <div>
-                  <div class="uz-lbl" id="u-lbl-dpkey" style="margin-bottom:6px"></div>
-                  <input type="text" id="u-pvz-dpkey-input" class="uz-in" style="width:120px">
+                <div class="rv-field">
+                  <div class="rv-label" id="u-lbl-dpkey"></div>
+                  <input type="text" id="u-pvz-dpkey-input" class="rv-in" style="width:130px">
                 </div>
               </div>
-              <div id="u-pvz-display-orders" class="uz-orders"></div>
-              <div style="margin-top:22px"><button id="u-load-btn" class="uz-btn pri big"></button></div>
-              <div id="u-progress" class="uz-prog"></div>
+              <div id="u-pvz-display-orders" class="rv-orders"></div>
+              <div style="margin-top:22px"><button id="u-load-btn" class="rv-btn teal big"></button></div>
+              <div id="u-progress" class="rv-prog"></div>
             </div>
-          </div>
+          </section>
 
-          <div id="u-scan-screen" style="display:none;">
-            <div class="uz-stats">
-              <div class="uz-stat"><div class="uz-lbl" id="u-lbl-stat-orders"></div><b id="u-sc-orders">0</b></div>
-              <div class="uz-stat"><div class="uz-lbl" id="u-lbl-stat-plan"></div><b id="u-sc-plan">0</b></div>
-              <div class="uz-stat"><div class="uz-lbl" id="u-lbl-stat-scanned"></div><b id="u-sc-total" style="color:var(--p)">0</b></div>
+          <section id="u-scan-screen" style="display:none;">
+            <div class="rv-kpis">
+              <div class="rv-kpi"><div class="rv-label" id="u-lbl-stat-orders"></div><b id="u-sc-orders">0</b></div>
+              <div class="rv-kpi"><div class="rv-label" id="u-lbl-stat-plan"></div><b id="u-sc-plan">0</b></div>
+              <div class="rv-kpi"><div class="rv-label" id="u-lbl-stat-scanned"></div><b id="u-sc-total" style="color:var(--teal)">0</b></div>
             </div>
-            <div class="uz-bar"><div id="u-bar-fill"></div></div>
-            <div class="uz-barlbl" id="u-bar-label"></div>
+            <div class="rv-meter"><div id="u-bar-fill"></div></div>
+            <div class="rv-meterlbl" id="u-bar-label"></div>
 
-            <div class="uz-duo">
-              <div class="uz-card">
-                <div class="uz-lbl" id="u-lbl-cell"></div>
-                <div id="u-active-cell" class="uz-cell empty"></div>
+            <div class="rv-work">
+              <div class="rv-panel rv-cellbox">
+                <div class="rv-label" id="u-lbl-cell"></div>
+                <div id="u-active-cell" class="rv-cell empty"></div>
               </div>
-              <div class="uz-card">
-                <div class="uz-lbl" id="u-lbl-last"></div>
-                <div id="u-last-barcode" class="uz-last">—</div>
-                <div id="u-scan-hint" class="uz-banner"></div>
+              <div class="rv-panel">
+                <div class="rv-label" id="u-lbl-last"></div>
+                <div id="u-last-barcode" class="rv-last">—</div>
+                <div id="u-scan-hint" class="rv-hint"></div>
               </div>
             </div>
 
-            <div class="uz-scanrow">
+            <div class="rv-scanrow">
               <input type="text" id="u-barcode-input" autocomplete="off">
-              <button id="u-undo-btn" class="uz-btn"></button>
+              <button id="u-undo-btn" class="rv-btn"></button>
             </div>
 
-            <div class="uz-listhead">
+            <div class="rv-listhead">
               <span id="u-lbl-cell-items"></span>
-              <button id="u-finish-btn" class="uz-btn ok"></button>
+              <button id="u-finish-btn" class="rv-btn green"></button>
             </div>
-            <div id="u-cell-items" class="uz-items"></div>
-          </div>
+            <div id="u-cell-items" class="rv-list"></div>
+          </section>
 
-          <div id="u-report-screen" style="display:none;"></div>
+          <section id="u-report-screen" style="display:none;"></section>
 
-          <div id="u-history-screen" style="display:none;">
-            <div class="uz-hhead">
+          <section id="u-history-screen" style="display:none;">
+            <div class="rv-hhead">
               <h3 id="u-hist-title"></h3>
               <input type="text" id="u-hist-search">
             </div>
             <div id="u-hist-container"></div>
-          </div>
-        </div>
+          </section>
+        </main>
       </div>
     `;
     document.body.appendChild(modal);
@@ -2132,9 +2149,9 @@
     $('u-bar-fill').style.width = pct + '%';
     $('u-bar-label').textContent = t('barLabel', found, state.totalPlanUnits, pct);
 
-    const classes = { OK: 'ok', INFO: 'info', ACCEPTANCE: 'acc', RETURN: 'ret', FOREIGN: 'bad', SEARCH: 'search' };
+    const classes = { OK: 's-ok', INFO: 's-warn', ACCEPTANCE: 's-acc', RETURN: 's-ret', FOREIGN: 's-bad', SEARCH: 's-search' };
     const hintEl = $('u-scan-hint');
-    hintEl.className = 'uz-banner ' + (classes[statusType] || '');
+    hintEl.className = 'rv-hint ' + (classes[statusType] || '');
     hintEl.textContent = hintText || (state.activeCell ? t('hintScanItems') : t('hintNeedCell'));
 
     const container = $('u-cell-items');
@@ -2146,33 +2163,34 @@
     const hasAny = Object.keys(orderItems).length + Object.keys(accItems).length + Object.keys(retItems).length + Object.keys(forItems).length > 0;
 
     if (!hasAny) {
-      container.innerHTML = `<div class="uz-empty">${escHtml(t('emptyCell'))}</div>`;
+      container.innerHTML = `<div class="rv-empty">${escHtml(t('emptyCell'))}</div>`;
       return;
     }
 
     let rows = '';
     Object.entries(orderItems).forEach(([oId, qty]) => {
       const order = state.ordersMap[oId];
-      rows += `<tr><td><b>${escHtml(t('orderLabel', order?.pid || oId))}</b> <span style="color:var(--mut);font-size:11.5px">${escHtml(order?.customer?.firstName || '')}</span></td><td class="r" style="color:var(--ok)">${escHtml(t('pcs', qty))}</td></tr>`;
+      const bank = order?.kind === 'BANK' ? ` <span class="rv-tag s-info">${escHtml(t('badgeBank'))}</span>` : '';
+      rows += `<tr><td><b>${escHtml(t('orderLabel', order?.pid || oId))}</b>${bank} <span class="rv-muted">${escHtml(order?.customer?.firstName || '')}</span></td><td class="rv-r s-ok">${escHtml(t('pcs', qty))}</td></tr>`;
     });
     Object.entries(accItems).forEach(([code, data]) => {
-      rows += `<tr class="acc"><td><span class="mono">${escHtml(code)}</span><span class="uz-tag acc">${escHtml(t('badgeAcc'))}</span></td><td class="r" style="color:var(--acc)">+${escHtml(t('pcs', data.count))}</td></tr>`;
+      rows += `<tr class="s-acc"><td><span class="mono">${escHtml(code)}</span><span class="rv-tag s-acc">${escHtml(t('badgeAcc'))}</span></td><td class="rv-r s-acc">+${escHtml(t('pcs', data.count))}</td></tr>`;
     });
     Object.entries(retItems).forEach(([code, data]) => {
-      rows += `<tr class="ret"><td><span class="mono">${escHtml(code)}</span><span class="uz-tag ret">${escHtml(t('badgeRet'))}</span></td><td class="r" style="color:var(--ret)">+${escHtml(t('pcs', data.count))}</td></tr>`;
+      rows += `<tr class="s-ret"><td><span class="mono">${escHtml(code)}</span><span class="rv-tag s-ret">${escHtml(t('badgeRet'))}</span></td><td class="rv-r s-ret">+${escHtml(t('pcs', data.count))}</td></tr>`;
     });
     Object.entries(forItems).forEach(([code, qty]) => {
-      rows += `<tr class="bad"><td><span class="mono">${escHtml(code)}</span><span class="uz-tag bad">${escHtml(t('badgeForeign'))}</span></td><td class="r" style="color:var(--bad)">+${escHtml(t('pcs', qty))}</td></tr>`;
+      rows += `<tr class="s-bad"><td><span class="mono">${escHtml(code)}</span><span class="rv-tag s-bad">${escHtml(t('badgeForeign'))}</span></td><td class="rv-r s-bad">+${escHtml(t('pcs', qty))}</td></tr>`;
     });
 
-    container.innerHTML = `<table class="uz-tbl"><thead><tr><th>${escHtml(t('colOrderBarcode'))}</th><th style="text-align:right">${escHtml(t('colQty'))}</th></tr></thead><tbody>${rows}</tbody></table>`;
+    container.innerHTML = `<table class="rv-tbl"><thead><tr><th>${escHtml(t('colOrderBarcode'))}</th><th style="text-align:right">${escHtml(t('colQty'))}</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
-  const uzTable = (heads, rows) =>
-    `<table class="uz-tbl"><thead><tr>${heads.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
-  const uzNone = (txt, ok) => `<div class="uz-none ${ok ? 'ok' : ''}">${txt}</div>`;
-  const uzSection = (cls, title, count, units, body) =>
-    `<div class="uz-sec ${cls}"><div class="uz-sec-h"><span>${title}</span><span class="uz-pill">${t('pos', count)} · ${units}</span></div>${body}</div>`;
+  const rvTable = (heads, rows) =>
+    `<table class="rv-tbl"><thead><tr>${heads.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+  const rvNone = (txt, ok) => `<div class="rv-none ${ok ? 'ok' : ''}">${txt}</div>`;
+  const rvSection = (cls, title, count, units, body) =>
+    `<div class="rv-sec ${cls}"><div class="rv-sec-h"><span>${title}</span><span class="rv-pill">${t('pos', count)} · ${units}</span></div>${body}</div>`;
 
   function renderReportScreen() {
     refreshLocale();
@@ -2180,69 +2198,69 @@
     const container = $('u-report-screen');
 
     const tiles = [
-      { cls: 'bad', tt: t('tileShort'), n: report.pureShortages.length, u: `-${t('pcs', report.totalShortageUnits)}` },
-      { cls: 'warn', tt: t('tileMis'), n: report.mismatchedCells.length, u: t('pcs', report.totalMismatchUnits) },
-      { cls: 'acc', tt: t('tileAcc'), n: report.inAcceptance.length, u: t('pcs', report.totalAcceptanceUnits) },
-      { cls: 'ret', tt: t('tileRet'), n: report.canceledReturns.length, u: t('pcs', report.totalReturnUnits) },
-      { cls: 'mut', tt: t('tileSur'), n: report.pureSurplus.length, u: `+${t('pcs', report.totalSurplusUnits)}` }
+      { cls: 's-bad', tt: t('tileShort'), n: report.pureShortages.length, u: `-${t('pcs', report.totalShortageUnits)}` },
+      { cls: 's-warn', tt: t('tileMis'), n: report.mismatchedCells.length, u: t('pcs', report.totalMismatchUnits) },
+      { cls: 's-acc', tt: t('tileAcc'), n: report.inAcceptance.length, u: t('pcs', report.totalAcceptanceUnits) },
+      { cls: 's-ret', tt: t('tileRet'), n: report.canceledReturns.length, u: t('pcs', report.totalReturnUnits) },
+      { cls: 's-mut', tt: t('tileSur'), n: report.pureSurplus.length, u: `+${t('pcs', report.totalSurplusUnits)}` }
     ];
 
     let html = `
-      <div class="uz-rhead">
+      <div class="rv-rhead">
         <div>
           <h3>${escHtml(t('reportTitle', state.activePvzName))}</h3>
-          <div class="uz-rmeta">${t('reportMeta', state.totalOrdersCount, state.totalPlanUnits, state.totalScannedUnits)}</div>
+          <div class="rv-rmeta">${t('reportMeta', state.totalOrdersCount, state.totalPlanUnits, state.totalScannedUnits)}</div>
         </div>
-        <div class="uz-acts">
-          <button id="u-save-audit-btn" class="uz-btn ok">${t('btnSave')}</button>
-          <button id="u-excel-btn" class="uz-btn pri">${t('btnExcel')}</button>
-          <button id="u-resume-btn" class="uz-btn">${t('btnBack')}</button>
+        <div class="rv-acts">
+          <button id="u-save-audit-btn" class="rv-btn green">${t('btnSave')}</button>
+          <button id="u-excel-btn" class="rv-btn teal">${t('btnExcel')}</button>
+          <button id="u-resume-btn" class="rv-btn">${t('btnBack')}</button>
         </div>
       </div>
-      <div class="uz-tiles">${tiles.map(x => `<div class="uz-tile ${x.cls}"><div class="n">${x.n}</div><div class="t">${x.tt}</div><div class="u">${x.u}</div></div>`).join('')}</div>`;
+      <div class="rv-tiles">${tiles.map(x => `<div class="rv-tile ${x.cls}"><div class="n">${x.n}</div><div class="t">${x.tt}</div><div class="u">${x.u}</div></div>`).join('')}</div>`;
 
-    html += uzSection('bad', t('secShort'), report.pureShortages.length, `-${t('pcs', report.totalShortageUnits)}`,
+    html += rvSection('s-bad', t('secShort'), report.pureShortages.length, `-${t('pcs', report.totalShortageUnits)}`,
       report.pureShortages.length === 0
-        ? uzNone(t('noShort'), true)
-        : uzTable([t('thPid'), t('thMissing'), t('thShelf'), t('thClient')], report.pureShortages.map(r => `<tr>
-            <td><b>№${escHtml(r.pid || r.orderId)}</b></td>
-            <td style="color:var(--bad);font-weight:800">-${escHtml(t('pcs', r.missingCount))}</td>
+        ? rvNone(t('noShort'), true)
+        : rvTable([t('thPid'), t('thMissing'), t('thShelf'), t('thClient')], report.pureShortages.map(r => `<tr>
+            <td>${pidHtml(r)}</td>
+            <td class="s-bad" style="font-weight:800">-${escHtml(t('pcs', r.missingCount))}</td>
             <td>${escHtml(cellLabel(r.expectedCell))}</td>
-            <td>${escHtml(r.customer?.firstName || '')} ${r.customer?.phone ? '(' + escHtml(r.customer.phone) + ')' : ''}</td></tr>`).join('')));
+            <td>${escHtml(r.customer?.firstName || '')} ${r.customer?.phone ? '<span class="rv-muted">(' + escHtml(r.customer.phone) + ')</span>' : ''}</td></tr>`).join('')));
 
-    html += uzSection('warn', t('secMis'), report.mismatchedCells.length, t('pcs', report.totalMismatchUnits),
+    html += rvSection('s-warn', t('secMis'), report.mismatchedCells.length, t('pcs', report.totalMismatchUnits),
       report.mismatchedCells.length === 0
-        ? uzNone(t('noMis'), true)
-        : uzTable([t('thPid'), t('thQty'), t('thPlanCell'), t('thActualCell')], report.mismatchedCells.map(r => `<tr>
-            <td><b>${escHtml(r.pid || r.orderId)}</b></td>
+        ? rvNone(t('noMis'), true)
+        : rvTable([t('thPid'), t('thQty'), t('thPlanCell'), t('thActualCell')], report.mismatchedCells.map(r => `<tr>
+            <td>${pidHtml(r)}</td>
             <td style="font-weight:800">${escHtml(t('pcs', r.count))}</td>
-            <td style="color:var(--bad);font-weight:800">${escHtml(cellLabel(r.expectedCell))}</td>
-            <td style="color:var(--ok);font-weight:800">${escHtml(r.actualCell)}</td></tr>`).join('')));
+            <td class="s-bad" style="font-weight:800">${escHtml(cellLabel(r.expectedCell))}</td>
+            <td class="s-ok" style="font-weight:800">${escHtml(r.actualCell)}</td></tr>`).join('')));
 
-    html += uzSection('acc', t('secAcc'), report.inAcceptance.length, t('pcs', report.totalAcceptanceUnits),
+    html += rvSection('s-acc', t('secAcc'), report.inAcceptance.length, t('pcs', report.totalAcceptanceUnits),
       report.inAcceptance.length === 0
-        ? uzNone(t('noAcc'), false)
-        : uzTable([t('thBarcodeLoc'), t('thQty'), t('thShelf'), t('thRec')], report.inAcceptance.map(r => `<tr>
+        ? rvNone(t('noAcc'), false)
+        : rvTable([t('thBarcodeLoc'), t('thQty'), t('thShelf'), t('thRec')], report.inAcceptance.map(r => `<tr>
             <td class="mono">${escHtml(r.code)}</td>
-            <td style="color:var(--acc);font-weight:800">+${escHtml(t('pcs', r.count))}</td>
+            <td class="rv-r s-acc">+${escHtml(t('pcs', r.count))}</td>
             <td>${escHtml(t('cellWord'))} ${escHtml(r.foundCell)}</td>
             <td style="font-weight:700">${escHtml(t('recAcc'))}</td></tr>`).join('')));
 
-    html += uzSection('ret', t('secRet'), report.canceledReturns.length, t('pcs', report.totalReturnUnits),
+    html += rvSection('s-ret', t('secRet'), report.canceledReturns.length, t('pcs', report.totalReturnUnits),
       report.canceledReturns.length === 0
-        ? uzNone(t('noRet'), false)
-        : uzTable([t('thBarcodeLoc'), t('thQty'), t('thShelf'), t('thRec')], report.canceledReturns.map(r => `<tr>
+        ? rvNone(t('noRet'), false)
+        : rvTable([t('thBarcodeLoc'), t('thQty'), t('thShelf'), t('thRec')], report.canceledReturns.map(r => `<tr>
             <td class="mono">${escHtml(r.code)}</td>
-            <td style="color:var(--ret);font-weight:800">+${escHtml(t('pcs', r.count))}</td>
+            <td class="rv-r s-ret">+${escHtml(t('pcs', r.count))}</td>
             <td>${escHtml(t('cellWord'))} ${escHtml(r.foundCell)}</td>
             <td style="font-weight:700">${escHtml(t('recRet'))}</td></tr>`).join('')));
 
-    html += uzSection('mut', t('secSur'), report.pureSurplus.length, `+${t('pcs', report.totalSurplusUnits)}`,
+    html += rvSection('s-mut', t('secSur'), report.pureSurplus.length, `+${t('pcs', report.totalSurplusUnits)}`,
       report.pureSurplus.length === 0
-        ? uzNone(t('noSur'), false)
-        : uzTable([t('thBarcode'), t('thExtra'), t('thFoundAt')], report.pureSurplus.map(r => `<tr>
+        ? rvNone(t('noSur'), false)
+        : rvTable([t('thBarcode'), t('thExtra'), t('thFoundAt')], report.pureSurplus.map(r => `<tr>
             <td class="mono">${escHtml(r.code)}</td>
-            <td style="color:var(--bad);font-weight:800">+${escHtml(t('pcs', r.qty))}</td>
+            <td class="rv-r s-bad">+${escHtml(t('pcs', r.qty))}</td>
             <td>${escHtml(t('cellWord'))} ${escHtml(r.foundCell)}</td></tr>`).join('')));
 
     container.innerHTML = html;
@@ -2259,7 +2277,7 @@
     const list = getHistoryList();
 
     if (list.length === 0) {
-      container.innerHTML = `<div class="uz-empty">${escHtml(t('histEmpty'))}</div>`;
+      container.innerHTML = `<div class="rv-empty">${escHtml(t('histEmpty'))}</div>`;
       return;
     }
 
@@ -2270,7 +2288,7 @@
     }
 
     if (filtered.length === 0) {
-      container.innerHTML = `<div class="uz-empty">${escHtml(t('histNotFound'))}</div>`;
+      container.innerHTML = `<div class="rv-empty">${escHtml(t('histNotFound'))}</div>`;
       return;
     }
 
@@ -2278,22 +2296,22 @@
     filtered.forEach(item => {
       const s = item.stats || {};
       html += `
-        <div class="uz-hist">
+        <div class="rv-hist">
           <div>
             <div class="h1">${escHtml(item.pvzName)} <span>· ID ${escHtml(item.dpKey)} · ${escHtml(item.date)} ${escHtml(item.time)}</span></div>
-            <div class="uz-chips">
-              <span class="uz-chip">${escHtml(t('chipOrders', s.totalOrders ?? 0))}</span>
-              <span class="uz-chip">${escHtml(t('chipPlan', s.totalPlanUnits ?? 0))}</span>
-              <span class="uz-chip">${escHtml(t('chipFact', s.totalScanned ?? 0))}</span>
-              <span class="uz-chip bad">${escHtml(t('chipShort', s.shortageCount ?? 0))}</span>
-              <span class="uz-chip warn">${escHtml(t('chipMis', s.mismatchCount ?? 0))}</span>
-              <span class="uz-chip acc">${escHtml(t('chipAcc', s.acceptanceCount ?? 0))}</span>
-              <span class="uz-chip ret">${escHtml(t('chipRet', s.returnCount ?? 0))}</span>
+            <div class="rv-chips">
+              <span class="rv-chip">${escHtml(t('chipOrders', s.totalOrders ?? 0))}</span>
+              <span class="rv-chip">${escHtml(t('chipPlan', s.totalPlanUnits ?? 0))}</span>
+              <span class="rv-chip">${escHtml(t('chipFact', s.totalScanned ?? 0))}</span>
+              <span class="rv-chip s-bad">${escHtml(t('chipShort', s.shortageCount ?? 0))}</span>
+              <span class="rv-chip s-warn">${escHtml(t('chipMis', s.mismatchCount ?? 0))}</span>
+              <span class="rv-chip s-acc">${escHtml(t('chipAcc', s.acceptanceCount ?? 0))}</span>
+              <span class="rv-chip s-ret">${escHtml(t('chipRet', s.returnCount ?? 0))}</span>
             </div>
           </div>
-          <div class="uz-acts">
-            <button class="uz-btn pri u-download-past-btn" data-id="${escHtml(item.id)}">${t('btnXlsx')}</button>
-            <button class="uz-btn del u-delete-past-btn" data-id="${escHtml(item.id)}" title="${escHtml(t('deleteTitle'))}">🗑</button>
+          <div class="rv-acts">
+            <button class="rv-btn teal u-download-past-btn" data-id="${escHtml(item.id)}">${t('btnXlsx')}</button>
+            <button class="rv-btn danger u-delete-past-btn" data-id="${escHtml(item.id)}" title="${escHtml(t('deleteTitle'))}">✕</button>
           </div>
         </div>`;
     });
