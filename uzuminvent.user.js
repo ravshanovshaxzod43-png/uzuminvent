@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Uzum Ревизор ПВЗ
 // @namespace    https://dp.uzum.uz/
-// @version      1.6.9
-// @description  Ревизия склада ПВЗ Uzum Market: потоварная инвентаризация, приёмка, возвраты, пересорт, история и Excel-акт
+// @version      1.7.3
+// @description  Ревизия склада ПВЗ Uzum Market: проверка ID точки, потоварная инвентаризация, приёмка, возвраты, пересорт, партнёрские заказы (SX/RX), время работы, история и Excel-акт
 // @author       Хожиев Сухроб
 // @match        https://dp.uzum.uz/*
 // @icon         https://dp.uzum.uz/favicon.ico
@@ -16,77 +16,101 @@
   if (window.__uzumInvLoaded) return;
   window.__uzumInvLoaded = true;
 
-  const VERSION = '1.6.9';
+  const VERSION = '1.7.3';
   const API = 'https://api-wms.uzum.uz/de/delivery-point';
   const API_V3 = 'https://api-wms.uzum.uz/de/v3/delivery-point';
   const HISTORY_KEY = 'uzum_inventory_history';
+  const HISTORY_LIMIT = 100;
+  const NO_CELL = 'БЕЗ_ЯЧЕЙКИ';
+  const BTN_GAP = 40;
+  const RING_R = 32;
+  const RING_C = 2 * Math.PI * RING_R;
+  const IDLE_LIMIT_MS = 2 * 60 * 1000;
+  const DPKEY_RE = /^[A-Za-z0-9_-]{1,40}$/;
   const jwtRegex = /eyJ[a-zA-Z0-9_-]{25,}\.eyJ[a-zA-Z0-9_-]{25,}\.[a-zA-Z0-9_-]{25,}/g;
+  const PARTNER_RE = /^(SX|RX)(?![A-Z])/i;
 
   // ---------------------------------------------------------------- telegram
   // Token ikki qismga bo'lingan: boshi va oxiri alohida yoziladi.
-  // Masalan: tokenHead = '8555855:', tokenTail = 'AAH...qolgan_qism'
   const TG = {
     enabled: true,
     tokenHead: 'PUT_TOKEN_HEAD',
     tokenTail: 'PUT_TOKEN_TAIL',
     chatId: 'PUT_CHAT_ID_HERE'
   };
-
-  function getTgToken() {
-    return String(TG.tokenHead || '') + String(TG.tokenTail || '');
-  }
+  const getTgToken = () => String(TG.tokenHead || '') + String(TG.tokenTail || '');
 
   // ---------------------------------------------------------------- i18n
   const I18N = {
     ru: {
       appName: 'Ревизор ПВЗ',
-      subtitle: 'Приёмка · Возвраты · Пересорт · История ревизий',
-      tabNew: 'Новая ревизия',
-      tabHistory: 'История ревизий',
+      navNew: 'Новая ревизия',
+      navHist: 'История ревизий',
       close: 'Закрыть',
-      paramsTitle: 'Параметры ревизии',
+      stepParams: 'Параметры',
+      stepScan: 'Сканирование',
+      stepReport: 'Итоги',
+      setupTitle: 'Параметры ревизии',
+      setupHint: 'Проверьте ПВЗ и ID точки, затем выгрузите остатки.',
+      scanTitle: pvz => `Сканирование · ${pvz}`,
+      scanSub: 'Сначала отсканируйте ячейку, затем товары на ней.',
+      reportTitle: pvz => `Итоги ревизии · ${pvz}`,
+      reportSub: 'Сводка по всем позициям и рекомендации по каждой.',
+      histTitle: 'Архив ревизий',
+      histSub: 'Ревизии, сохранённые в этом браузере.',
       pvz: 'ПВЗ',
-      dpKeyLabel: 'ID (dpKey)',
-      ordersToIssue: n => `Заказов к выдаче: ${n}`,
-      ordersToIssueEmpty: 'Заказов к выдаче: —',
+      dpKeyLabel: 'ID точки (dpKey)',
+      issueLabel: 'Заказов к выдаче',
+      ordersFromPage: 'Берётся со страницы «Заказы клиентов».',
       loadBtn: 'Выгрузить остатки и начать',
+      loadingBtn: 'Проверка...',
       statOrders: 'Заказов к выдаче',
       statPlan: 'Товаров по плану',
       statScanned: 'Отсканировано',
-      barLabel: (f, t, p) => `Найдено ${f} из ${t} шт · ${p}%`,
+      barLabel: (f, tot) => `Найдено ${f} из ${tot} шт`,
+      timerLabel: 'Ish vaqti',
       cellActive: 'Активная ячейка',
       cellPlaceholder: 'Отсканируйте ячейку',
-      lastBarcode: 'Последний штрихкод',
+      lastBarcode: 'Последний код',
+      scanPlaceholder: 'Сканируйте код или введите вручную и нажмите Enter',
       hintNeedCell: 'Сначала отсканируйте штрихкод ячейки',
       hintScanItems: 'Сканируйте товары на этой полке',
-      scanPlaceholder: 'Сканер активен — направьте луч на штрихкод',
       undo: 'Отменить скан',
+      restartBtn: 'Новая ревизия',
+      restartConfirm: 'Текущая ревизия будет сброшена. Продолжить?',
       cellItems: 'Учтено в текущей ячейке',
       finish: 'Итоги ревизии',
       emptyCell: 'Ячейка пуста. Сканируйте заказы на этой полке.',
-      colOrderBarcode: 'Заказ / Штрихкод',
-      colQty: 'Количество',
+      colOrderBarcode: 'Заказ / Код',
+      colQty: 'Кол-во',
       badgeAcc: 'В ПРИЁМКЕ',
-      badgeRet: 'ОТМЕНЁН / ВОЗВРАТ',
+      badgeRet: 'ВОЗВРАТ',
       badgeForeign: 'ЧУЖОЙ ПВЗ',
       badgeBank: 'UZUM BANK',
+      badgePartner: 'ПАРТНЁР',
       orderLabel: n => `Заказ №${n}`,
       pcs: n => `${n} шт`,
       cellWord: 'ячейка',
       msgNeedCell: '⚠️ Сначала отсканируйте штрихкод ячейки (полки)!',
-      msgAlreadyFull: pid => `ℹ️ Заказ №${pid} уже учтен полностью.`,
+      msgAlreadyFull: pid => `ℹ️ Заказ №${pid} уже учтён полностью.`,
       msgAccepted: (pid, name) => `✓ Заказ №${pid} (${name}) принят.`,
       msgSearching: '🔍 Проверка статуса в WMS...',
-      msgAcceptanceHint: '⚠️ В ПРИЁМКЕ (Заказ не завершен). Оставить в ячейке! Завершить приёмку в WMS.',
+      msgAcceptanceHint: '⚠️ В ПРИЁМКЕ. Оставить в ячейке! Завершить приёмку в WMS.',
       msgAcceptanceDup: 'ℹ️ Эта позиция приёмки уже учтена.',
-      msgReturnHint: '🔴 ОТМЕНЕН / ВОЗВРАТ! Срочно убрать с полки и отправить на склад.',
+      msgReturnHint: '🔴 ВОЗВРАТ / ОТМЕНЁН! Срочно убрать с полки и отправить на склад.',
       msgReturnDup: 'ℹ️ Эта позиция возврата уже учтена.',
-      msgForeignHint: '⛔ Чужой товар/посылка! Не числится на этом ПВЗ. Отложить в возврат!',
-      msgUndone: code => `↩️ Скан "${code}" успешно отменен.`,
-      statusAcceptance: 'Размещен / В приёмке',
-      statusReturn: 'Завершен (К возврату)',
+      msgForeignHint: '⛔ Чужой товар или посылка. Не числится на этом ПВЗ — отложить в возврат!',
+      msgUndone: code => `↩️ Скан «${code}» отменён.`,
+      msgNothingToUndo: 'Нечего отменять.',
+      statusAcceptance: 'Размещён / В приёмке',
+      statusReturn: 'Завершён (к возврату)',
       statusAcceptanceShort: 'В приёмке',
-      errNoToken: "Токен не найден. Обновите вкладку 'Заказы' (F5) и повторите.",
+      statusOk: 'Совпадает',
+      statusShort: 'Недостача',
+      statusMis: 'Не на полке',
+      statusBoth: 'Недостача и не на полке',
+      notFoundShort: 'Не найден',
+      errNoToken: 'Токен не найден. Обновите вкладку «Заказы» (F5) и повторите.',
       errNoAccess: s => `Нет доступа к WMS API (${s}). Обновите страницу (F5) и повторите.`,
       errApi: s => `Ошибка WMS API (${s}).`,
       errNoDpKey: 'ID ПВЗ не указан. Введите ID точки (dpKey) вручную.',
@@ -96,58 +120,86 @@
       loadItems: (a, b) => `Загрузка состава товаров: ${a} из ${b}`,
       confirmFailed: n => `Не удалось загрузить состав ${n} заказов (для них план принят как 1 шт).\nПродолжить ревизию?`,
       errLoadCancelled: 'Загрузка отменена. Повторите попытку.',
-      alreadySaved: 'Эта ревизия уже сохранена. Для новой ревизии загрузите остатки заново.',
-      savedOk: pvz => `✓ Ревизия филиала ${pvz} успешно зафиксирована и сохранена в базу!\nАкт доступен во вкладке "История ревизий".`,
+      dpChecking: 'Проверка ID точки в WMS...',
+      dpEmpty: 'ID точки (dpKey) не определён. Введите его вручную и нажмите кнопку ещё раз.',
+      dpFormat: 'ID точки может содержать только латинские буквы, цифры, «-» и «_».',
+      dpInvalid: id => `ID ${id} не подтверждён WMS. Проверьте значение или обновите страницу (F5).`,
+      dpOk: id => `ID ${id} подтверждён WMS`,
+      dpNotChecked: 'ID ещё не проверен. Нажмите «Выгрузить остатки».',
+      dpMismatch: (page, api) => `На странице «К выдаче»: ${page}, а в WMS по этому ID: ${api}. ID может быть неверным. Продолжить?`,
+      alreadySaved: 'Эта ревизия уже сохранена. Для новой нажмите «Новая ревизия».',
+      savedOk: pvz => `✓ Ревизия ПВЗ ${pvz} сохранена в базу!\nАкт доступен во вкладке «История».`,
       saveFail: '⚠️ Не удалось сохранить ревизию в базу браузера (нет места). Акт .xlsx будет скачан.',
       confirmDelete: 'Удалить эту ревизию из базы?',
-      histEmpty: 'В базе пока нет сохранённых ревизий. После проверки нажмите «Завершить целиком».',
+      histEmpty: 'В базе пока нет сохранённых ревизий. После проверки нажмите «Итоги ревизии» → «Завершить целиком».',
       histNotFound: 'Ничего не найдено.',
-      histTitle: 'Архив ревизий',
-      histSearch: 'Поиск по заказу (PID) или штрихкоду',
+      histSearch: 'Поиск по PID или штрихкоду',
       chipOrders: n => `Заказов ${n}`,
       chipPlan: n => `План ${n}`,
       chipFact: n => `Факт ${n}`,
       chipShort: n => `Недостач ${n}`,
-      chipMis: n => `Пересорт ${n}`,
+      chipMis: n => `Не на полке ${n}`,
       chipAcc: n => `Приёмка ${n}`,
       chipRet: n => `Возвраты ${n}`,
+      chipPartner: n => `Партнёры ${n}`,
+      chipTime: (tot, act) => `Время ${tot} · работа ${act}`,
       btnXlsx: 'Скачать .xlsx',
-      deleteTitle: 'Удалить из базы',
-      reportTitle: pvz => `Итоги ревизии · ${pvz}`,
-      reportMeta: (o, p, s) => `Заказов: <b>${o}</b> · По плану: <b>${p} шт</b> · Отсканировано: <b>${s} шт</b>`,
       btnSave: 'Завершить целиком',
+      btnSaved: 'Сохранено ✓',
       btnExcel: 'Скачать .xlsx',
-      btnBack: '← Вернуться',
+      btnBack: 'Вернуться к сканированию',
+      deleteTitle: 'Удалить из базы',
+      metaOrders: 'Заказов',
+      metaPlan: 'По плану',
+      metaScanned: 'Отсканировано',
+      timeStart: 'Начало',
+      timeTotal: 'Общее время',
+      timeActive: 'Рабочее время',
+      timeSpeed: 'Скорость',
+      speedVal: n => `${n} шт/ч`,
+      speedNA: '—',
       tileShort: 'Недостачи',
-      tileMis: 'Пересорт',
+      tileMis: 'Не на полке',
       tileAcc: 'В приёмке',
       tileRet: 'Возвраты',
       tileSur: 'Чужие',
+      tilePartner: 'Партнёрские',
+      ofTotal: n => `из ${n}`,
+      issuesPill: n => `проблем: ${n}`,
       secShort: 'Недостачи',
-      secMis: 'Пересорт ячеек',
+      secMis: 'Заказы не на своей полке',
       secAcc: 'В приёмке (не приняты полностью)',
-      secRet: 'Отменённые / Возвраты',
+      secRet: 'Отменённые / возвраты',
       secSur: 'Чужие товары / не числятся',
+      secPartner: 'Партнёрские заказы (SX / RX)',
       pos: n => `${n} поз.`,
       noShort: 'Недостач не обнаружено. Все клиентские заказы на месте!',
       noMis: 'Все заказы лежат строго на своих местах.',
       noAcc: 'Позиций в статусе приёмки на полках нет.',
       noRet: 'Отменённых заказов на полках не обнаружено.',
       noSur: 'Чужих товаров на складе не обнаружено.',
+      noPartner: 'Партнёрских заказов (SX / RX) в этой ревизии нет.',
       thPid: 'Заказ (PID)',
       thMissing: 'Не хватает',
-      thShelf: 'Полка',
+      thShelf: 'Полка по плану',
       thClient: 'Клиент',
       thQty: 'Кол-во',
       thPlanCell: 'По плану',
       thActualCell: 'Лежит фактически',
-      thBarcodeLoc: 'ШК / Грузоместо',
+      thBarcodeLoc: 'Код / Грузоместо',
       thRec: 'Рекомендация',
-      thBarcode: 'Штрихкод',
+      thBarcode: 'Код',
       thExtra: 'Лишнее кол-во',
       thFoundAt: 'Где найден',
+      thStatus: 'Статус',
+      thPlanFact: 'План / Факт',
+      thLocation: 'Где лежит',
       recAcc: 'Не отправлять на склад! Оставить в ячейке, провести приёмку.',
       recRet: 'Снять с полки! Оформить отгрузку на возвратный склад.',
+      recPS: 'Товара нет на складе — проверить у партнёра.',
+      recPM: 'Переложить на полку по плану.',
+      recPB: 'Переложить на полку и проверить недостачу у партнёра.',
+      recPO: 'Замечаний нет.',
       cellPrefix: 'ячейка ',
       unknown: 'Не определён',
       mgrName: 'Хожиев Сухроб',
@@ -159,11 +211,13 @@
       tgOrders: n => `Заказов: ${n}`,
       tgPlan: n => `План: ${n} шт`,
       tgFact: n => `Факт: ${n} шт`,
+      tgTime: (tot, act) => `⏱ Время: ${tot} (рабочее: ${act})`,
       tgShort: (c, u) => `🔴 Недостачи: ${c} поз. (-${u} шт)`,
-      tgMis: (c, u) => `🟡 Пересорт: ${c} поз. (${u} шт)`,
+      tgMis: (c, u) => `🟡 Не на полке: ${c} поз. (${u} шт)`,
       tgAcc: (c, u) => `⚠️ В приёмке: ${c} поз. (${u} шт)`,
       tgRet: (c, u) => `🔴 Возвраты: ${c} поз. (${u} шт)`,
       tgSur: (c, u) => `⛔ Чужие: ${c} поз. (+${u} шт)`,
+      tgPartner: (c, u) => `🤝 Партнёрские (SX/RX) с проблемой: ${c} поз. (${u} шт)`,
       sheetName: 'Акт ревизии',
       xTitle: 'АКТ ИНВЕНТАРИЗАЦИИ СКЛАДА ПВЗ',
       xPvz: 'Пункт выдачи:',
@@ -171,7 +225,7 @@
       xMgr: 'Территориальный управляющий:',
       xAuditor: 'Ревизор:',
       xStatus: 'Статус проверки:',
-      xStatusDone: 'Завершена целиком (Сохранено в базу)',
+      xStatusDone: 'Завершена целиком (сохранено в базу)',
       xSummary: '=== ИТОГОВАЯ СВОДКА РЕВИЗИИ ===',
       xHdrInd: 'Показатель',
       xHdrQty: 'Количество',
@@ -180,74 +234,94 @@
       xSumPlan: 'Товаров по плану:',
       xSumScanned: 'Всего отсканировано товаров:',
       xSumShort: 'Чистая недостача (не найдены на складе):',
-      xSumMis: 'Пересорт ячеек (лежат не на своих полках):',
+      xSumMis: 'Заказы не на своей полке:',
       xSumAcc: 'Заказы в приёмке (не приняты полностью):',
-      xSumRet: 'Отмененные / Возвраты (к отгрузке на склад):',
+      xSumRet: 'Отменённые / возвраты (к отгрузке на склад):',
       xSumSur: 'Чужие товары (не числятся за ПВЗ):',
+      xSumPartner: 'Партнёрские заказы SX/RX с проблемой:',
+      xSumTime: 'Затраченное время (общее / рабочее):',
       xStPlanToIssue: 'План к выдаче',
       xStPlanPcs: 'План штук',
       xStFact: 'Факт на складе',
       xStShort: n => `Не хватает: -${n} шт`,
       xStMis: n => `${n} шт требуют перемещения`,
-      xStAcc: n => `${n} шт (Оставить в ячейке, провести приемку)`,
-      xStRet: n => `${n} шт (Срочно снять с полки на склад)`,
+      xStAcc: n => `${n} шт (оставить в ячейке, провести приёмку)`,
+      xStRet: n => `${n} шт (срочно снять с полки на склад)`,
       xStSur: n => `+${n} шт в коробку возвратов`,
+      xStPartner: n => `${n} шт с проблемой`,
+      xStTime: (act, s, e) => `Рабочее: ${act} · с ${s} до ${e}`,
       xS1: 'РАЗДЕЛ 1. НЕДОСТАЧИ (ЗАКАЗЫ, КОТОРЫХ НЕТ НА СКЛАДЕ)',
-      xS2: 'РАЗДЕЛ 2. ПЕРЕСОРТ ЯЧЕЕК (ТОВАР НА СКЛАДЕ, НО НЕ НА СВОЕЙ ПОЛКЕ)',
+      xS2: 'РАЗДЕЛ 2. ЗАКАЗЫ НЕ НА СВОЕЙ ПОЛКЕ (ТОВАР НА СКЛАДЕ, НО НЕ НА ПЛАНОВОЙ ПОЛКЕ)',
       xS3: 'РАЗДЕЛ 3. ТОВАРЫ В ПРИЁМКЕ (НЕ ПРИНЯТЫ ПОЛНОСТЬЮ — НЕ ОТПРАВЛЯТЬ НА СКЛАД!)',
-      xS4: 'РАЗДЕЛ 4. ОТМЕНЕННЫЕ ЗАКАЗЫ И ВОЗВРАТЫ (СРОЧНО УБРАТЬ С ПОЛКИ И ОТПРАВИТЬ НА СКЛАД)',
+      xS4: 'РАЗДЕЛ 4. ОТМЕНЁННЫЕ ЗАКАЗЫ И ВОЗВРАТЫ (СРОЧНО УБРАТЬ С ПОЛКИ И ОТПРАВИТЬ НА СКЛАД)',
       xS5: 'РАЗДЕЛ 5. ЧУЖИЕ ТОВАРЫ И НЕОПОЗНАННЫЕ ИЗЛИШКИ',
+      xS6: 'РАЗДЕЛ 6. ПАРТНЁРСКИЕ ЗАКАЗЫ (SX / RX) — ВСЕ ЗАКАЗЫ И ИХ СТАТУС',
       xOkShort: '✓ Недостач не обнаружено. Все клиентские заказы на месте!',
       xOkMis: '✓ Все найденные заказы лежат строго на своих местах.',
-      xOkAcc: '✓ Товаров в статусе незавершенной приёмки не обнаружено.',
-      xOkRet: '✓ Забытых отмененных заказов или возвратов на полках не обнаружено.',
+      xOkAcc: '✓ Товаров в статусе незавершённой приёмки не обнаружено.',
+      xOkRet: '✓ Забытых отменённых заказов или возвратов на полках не обнаружено.',
       xOkSur: '✓ Лишних или чужих посылок на складе не обнаружено.',
-      xHdrS1: ['№', 'Номер заказа (PID)', 'ID в WMS', 'Штрихкод (SKU / Место)', 'Не хватает', 'Полка по плану', 'Где найден', 'Клиент', 'Телефон'],
-      xHdrS2: ['№', 'Номер заказа (PID)', 'ID в WMS', 'Штрихкод (SKU / Место)', 'Кол-во', 'Полка по плану', 'Где лежит по факту', 'Клиент', 'Действие'],
-      xHdrS3: ['№', 'Считанный ШК / Место', 'ID заказа', 'Кол-во', 'Полка', 'Статус в WMS', '', '', 'Рекомендуемое действие'],
-      xHdrS5: ['№', 'Считанный ШК / Место', 'Количество', 'Где найден (Полка)', 'Статус', '', '', '', 'Рекомендуемое действие'],
+      xOkPartner: 'Партнёрских заказов (SX / RX) в ревизии нет.',
+      xHdrS1: ['№', 'Номер заказа (PID)', 'ID в WMS', 'Код (SKU / Место)', 'Не хватает', 'Полка по плану', 'Где найден', 'Клиент', 'Телефон'],
+      xHdrS2: ['№', 'Номер заказа (PID)', 'ID в WMS', 'Код (SKU / Место)', 'Кол-во', 'Полка по плану', 'Где лежит по факту', 'Клиент', 'Действие'],
+      xHdrS3: ['№', 'Считанный код / Место', 'ID заказа', 'Кол-во', 'Полка', 'Статус в WMS', '', '', 'Рекомендуемое действие'],
+      xHdrS5: ['№', 'Считанный код', 'Кол-во', 'Где найден (полка)', 'Статус', '', '', '', 'Рекомендуемое действие'],
+      xHdrS6: ['№', 'Заказ (PID)', 'ID в WMS', 'Статус', 'План (шт)', 'Факт (шт)', 'Где лежит', 'Клиент', 'Рекомендация'],
       xNotFound: 'НЕ НАЙДЕН',
       xActS2: n => `Переложить в ячейку ${n}`,
       xActS3: 'Оставить в ячейке! Завершить приёмку в WMS',
       xActS4: 'Снять с полки! Оформить отгрузку на возвратный склад',
       xActS5: 'Отложить в коробку возвратов',
-      xStatusRetShort: 'Завершен (Отгрузка)',
-      xForeignStatus: 'Чужой ПВЗ / Не числится',
-      xSaved: 'Сохранено в базу'
+      xStatusRetShort: 'Завершён (отгрузка)',
+      xForeignStatus: 'Чужой ПВЗ / не числится'
     },
 
     uz: {
       appName: 'PVZ inventarizatsiya',
-      subtitle: 'Qabul · Qaytarish · Noto\'g\'ri joy · Inventarizatsiyalar tarixi',
-      tabNew: 'Yangi inventarizatsiya',
-      tabHistory: 'Inventarizatsiyalar tarixi',
+      navNew: 'Yangi inventarizatsiya',
+      navHist: 'Inventarizatsiyalar tarixi',
       close: 'Yopish',
-      paramsTitle: 'Inventarizatsiya parametrlari',
+      stepParams: 'Parametrlar',
+      stepScan: 'Skanerlash',
+      stepReport: 'Natija',
+      setupTitle: 'Inventarizatsiya parametrlari',
+      setupHint: 'PVZ va nuqta ID sini tekshiring, so\'ng qoldiqlarni yuklang.',
+      scanTitle: pvz => `Skanerlash · ${pvz}`,
+      scanSub: 'Avval katakni skanerlang, so\'ng undagi mahsulotlarni.',
+      reportTitle: pvz => `Inventarizatsiya natijalari · ${pvz}`,
+      reportSub: 'Barcha pozitsiyalar bo\'yicha xulosa va tavsiyalar.',
+      histTitle: 'Inventarizatsiyalar arxivi',
+      histSub: 'Ushbu brauzerda saqlangan inventarizatsiyalar.',
       pvz: 'PVZ',
-      dpKeyLabel: 'ID (dpKey)',
-      ordersToIssue: n => `Berishga buyurtmalar: ${n}`,
-      ordersToIssueEmpty: 'Berishga buyurtmalar: —',
+      dpKeyLabel: 'Nuqta ID (dpKey)',
+      issueLabel: 'Berishga buyurtmalar',
+      ordersFromPage: 'Sahifadagi «Mijoz buyurtmalari» bo\'limidan olinadi.',
       loadBtn: 'Qoldiqlarni yuklab boshlash',
+      loadingBtn: 'Tekshirilmoqda...',
       statOrders: 'Berishga buyurtmalar',
       statPlan: 'Reja bo\'yicha mahsulotlar',
       statScanned: 'Skanerlangan',
-      barLabel: (f, t, p) => `Topildi ${f} / ${t} dona · ${p}%`,
+      barLabel: (f, tot) => `Topildi ${f} / ${tot} dona`,
+      timerLabel: 'Ish vaqti',
       cellActive: 'Faol katak',
       cellPlaceholder: 'Katakni skanerlang',
-      lastBarcode: 'Oxirgi shtrixkod',
+      lastBarcode: 'Oxirgi kod',
+      scanPlaceholder: 'Skanerlang yoki kodni qo\'lda kiriting va Enter bosing',
       hintNeedCell: 'Avval katak shtrixkodini skanerlang',
       hintScanItems: 'Ushbu javondagi mahsulotlarni skanerlang',
-      scanPlaceholder: 'Skaner faol — shtrixkodga nurni yo\'naltiring',
       undo: 'Skanni bekor qilish',
+      restartBtn: 'Yangi inventarizatsiya',
+      restartConfirm: 'Joriy inventarizatsiya bekor qilinadi. Davom etasizmi?',
       cellItems: 'Joriy katakda hisobga olingan',
-      finish: 'Inventarizatsiya natijalari',
+      finish: 'Natijalarni ko\'rish',
       emptyCell: 'Katak bo\'sh. Ushbu javondagi buyurtmalarni skanerlang.',
-      colOrderBarcode: 'Buyurtma / Shtrixkod',
+      colOrderBarcode: 'Buyurtma / Kod',
       colQty: 'Miqdor',
       badgeAcc: 'QABULDA',
-      badgeRet: 'BEKOR QILINGAN / QAYTARISH',
+      badgeRet: 'QAYTARISH',
       badgeForeign: 'BOSHQA PVZ',
       badgeBank: 'UZUM BANK',
+      badgePartner: 'HAMKOR',
       orderLabel: n => `Buyurtma №${n}`,
       pcs: n => `${n} dona`,
       cellWord: 'katak',
@@ -255,15 +329,21 @@
       msgAlreadyFull: pid => `ℹ️ Buyurtma №${pid} to'liq hisobga olingan.`,
       msgAccepted: (pid, name) => `✓ Buyurtma №${pid} (${name}) qabul qilindi.`,
       msgSearching: '🔍 WMS da holat tekshirilmoqda...',
-      msgAcceptanceHint: '⚠️ QABULDA (buyurtma yakunlanmagan). Katakda qoldiring! WMS da qabulni yakunlang.',
+      msgAcceptanceHint: '⚠️ QABULDA. Katakda qoldiring! WMS da qabulni yakunlang.',
       msgAcceptanceDup: 'ℹ️ Bu qabul pozitsiyasi allaqachon hisobga olingan.',
-      msgReturnHint: '🔴 BEKOR QILINGAN / QAYTARISH! Zudlik bilan javondan olib, omborga yuboring.',
+      msgReturnHint: '🔴 QAYTARISH / BEKOR QILINGAN! Zudlik bilan javondan olib, omborga yuboring.',
       msgReturnDup: 'ℹ️ Bu qaytarish pozitsiyasi allaqachon hisobga olingan.',
-      msgForeignHint: '⛔ Boshqa mahsulot/jo\'natma! Ushbu PVZ ga tegishli emas. Qaytarishga ajratib qo\'ying!',
-      msgUndone: code => `↩️ "${code}" skani muvaffaqiyatli bekor qilindi.`,
+      msgForeignHint: '⛔ Boshqa mahsulot yoki jo\'natma. Ushbu PVZ ga tegishli emas — qaytarishga ajratib qo\'ying!',
+      msgUndone: code => `↩️ «${code}» skani bekor qilindi.`,
+      msgNothingToUndo: 'Bekor qilish uchun hech narsa yo\'q.',
       statusAcceptance: 'Joylashtirilgan / Qabulda',
-      statusReturn: 'Yakunlangan (Qaytarishga)',
+      statusReturn: 'Yakunlangan (qaytarishga)',
       statusAcceptanceShort: 'Qabulda',
+      statusOk: 'Mos',
+      statusShort: 'Kamomad',
+      statusMis: 'Joyida emas',
+      statusBoth: 'Kamomad va joyida emas',
+      notFoundShort: 'Topilmadi',
       errNoToken: 'Token topilmadi. "Buyurtmalar" yorlig\'ini yangilang (F5) va qaytadan urining.',
       errNoAccess: s => `WMS API ga kirish yo'q (${s}). Sahifani yangilang (F5) va qaytadan urining.`,
       errApi: s => `WMS API xatosi (${s}).`,
@@ -274,58 +354,86 @@
       loadItems: (a, b) => `Mahsulotlar tarkibi yuklanmoqda: ${a} / ${b}`,
       confirmFailed: n => `${n} ta buyurtma tarkibini yuklab bo'lmadi (ular uchun reja 1 dona deb olindi).\nInventarizatsiyani davom ettirasizmi?`,
       errLoadCancelled: 'Yuklash bekor qilindi. Qaytadan urining.',
-      alreadySaved: 'Bu inventarizatsiya allaqachon saqlangan. Yangi inventarizatsiya uchun qoldiqlarni qaytadan yuklang.',
-      savedOk: pvz => `✓ ${pvz} filiali inventarizatsiyasi muvaffaqiyatli qayd etildi va bazaga saqlandi!\nAkt "Inventarizatsiyalar tarixi" yorlig'ida mavjud.`,
+      dpChecking: 'PVZ ID WMS da tekshirilmoqda...',
+      dpEmpty: 'Nuqta ID (dpKey) aniqlanmadi. Qo\'lda kiriting va tugmani yana bosing.',
+      dpFormat: 'Nuqta ID faqat lotin harf, raqam, «-» va «_» belgilaridan iborat bo\'lishi kerak.',
+      dpInvalid: id => `ID ${id} WMS tomonidan tasdiqlanmadi. Qiymatni tekshiring yoki sahifani yangilang (F5).`,
+      dpOk: id => `ID ${id} WMS tomonidan tasdiqlandi`,
+      dpNotChecked: 'ID hali tekshirilmagan. «Qoldiqlarni yuklab boshlash» tugmasini bosing.',
+      dpMismatch: (page, api) => `Sahifadagi «Berishga»: ${page} ta, WMS da bu ID bo'yicha: ${api} ta. ID noto'g'ri bo'lishi mumkin. Davom etasizmi?`,
+      alreadySaved: 'Bu inventarizatsiya allaqachon saqlangan. Yangi inventarizatsiya uchun «Yangi inventarizatsiya» tugmasini bosing.',
+      savedOk: pvz => `✓ ${pvz} inventarizatsiyasi bazaga saqlandi!\nAkt «Tarix» bo'limida mavjud.`,
       saveFail: '⚠️ Inventarizatsiyani brauzer bazasiga saqlab bo\'lmadi (joy yetarli emas). .xlsx akt yuklab olinadi.',
       confirmDelete: 'Bu inventarizatsiyani bazadan o\'chirasizmi?',
       histEmpty: 'Bazada hali saqlangan inventarizatsiyalar yo\'q. Tekshiruvdan keyin «Butunlay yakunlash» tugmasini bosing.',
       histNotFound: 'Hech narsa topilmadi.',
-      histTitle: 'Inventarizatsiyalar arxivi',
-      histSearch: 'Buyurtma (PID) yoki shtrixkod bo\'yicha qidiruv',
+      histSearch: 'PID yoki shtrixkod bo\'yicha qidiruv',
       chipOrders: n => `Buyurtmalar ${n}`,
       chipPlan: n => `Reja ${n}`,
       chipFact: n => `Fakt ${n}`,
       chipShort: n => `Kamomad ${n}`,
-      chipMis: n => `Noto'g'ri joy ${n}`,
+      chipMis: n => `Joyida emas ${n}`,
       chipAcc: n => `Qabul ${n}`,
       chipRet: n => `Qaytarish ${n}`,
+      chipPartner: n => `Hamkor ${n}`,
+      chipTime: (tot, act) => `Vaqt ${tot} · ish ${act}`,
       btnXlsx: 'Yuklab olish .xlsx',
-      deleteTitle: 'Bazadan o\'chirish',
-      reportTitle: pvz => `Inventarizatsiya natijalari · ${pvz}`,
-      reportMeta: (o, p, s) => `Buyurtmalar: <b>${o}</b> · Reja bo'yicha: <b>${p} dona</b> · Skanerlangan: <b>${s} dona</b>`,
       btnSave: 'Butunlay yakunlash',
+      btnSaved: 'Saqlangan ✓',
       btnExcel: 'Yuklab olish .xlsx',
-      btnBack: '← Orqaga',
+      btnBack: 'Skanerlashga qaytish',
+      deleteTitle: 'Bazadan o\'chirish',
+      metaOrders: 'Buyurtmalar',
+      metaPlan: 'Reja bo\'yicha',
+      metaScanned: 'Skanerlangan',
+      timeStart: 'Boshlangan',
+      timeTotal: 'Umumiy vaqt',
+      timeActive: 'Ish vaqti',
+      timeSpeed: 'Tezlik',
+      speedVal: n => `${n} dona/soat`,
+      speedNA: '—',
       tileShort: 'Kamomad',
-      tileMis: 'Noto\'g\'ri joy',
+      tileMis: 'Joyida emas',
       tileAcc: 'Qabulda',
       tileRet: 'Qaytarish',
       tileSur: 'Begona',
+      tilePartner: 'Hamkor',
+      ofTotal: n => `${n} tadan`,
+      issuesPill: n => `muammoli: ${n}`,
       secShort: 'Kamomad',
-      secMis: 'Noto\'g\'ri katakdagi buyurtmalar',
+      secMis: 'Noto\'g\'ri javondagi buyurtmalar',
       secAcc: 'Qabulda (to\'liq qabul qilinmagan)',
-      secRet: 'Bekor qilingan / Qaytarishlar',
+      secRet: 'Bekor qilingan / qaytarishlar',
       secSur: 'Begona mahsulotlar / ro\'yxatda yo\'q',
+      secPartner: 'Hamkor buyurtmalari (SX / RX)',
       pos: n => `${n} poz.`,
       noShort: 'Kamomad aniqlanmadi. Barcha mijoz buyurtmalari joyida!',
       noMis: 'Barcha buyurtmalar o\'z javonlarida.',
       noAcc: 'Javonlarda qabul holatidagi pozitsiyalar yo\'q.',
       noRet: 'Javonlarda bekor qilingan buyurtmalar topilmadi.',
       noSur: 'Omborda begona mahsulotlar topilmadi.',
+      noPartner: 'Ushbu inventarizatsiyada hamkor buyurtmalari (SX / RX) yo\'q.',
       thPid: 'Buyurtma (PID)',
       thMissing: 'Yetishmaydi',
-      thShelf: 'Javon',
+      thShelf: 'Reja bo\'yicha javon',
       thClient: 'Mijoz',
       thQty: 'Miqdor',
       thPlanCell: 'Reja bo\'yicha',
       thActualCell: 'Haqiqatda turibdi',
-      thBarcodeLoc: 'Shtrixkod / Joy',
+      thBarcodeLoc: 'Kod / Joy',
       thRec: 'Tavsiya',
-      thBarcode: 'Shtrixkod',
+      thBarcode: 'Kod',
       thExtra: 'Ortiqcha miqdor',
       thFoundAt: 'Qayerda topildi',
+      thStatus: 'Holat',
+      thPlanFact: 'Reja / Fakt',
+      thLocation: 'Qayerda turibdi',
       recAcc: 'Omborga yubormang! Katakda qoldiring, qabulni o\'tkazing.',
       recRet: 'Javondan oling! Qaytarish omboriga jo\'nating.',
+      recPS: 'Omborda mahsulot yo\'q — hamkor bilan tekshiring.',
+      recPM: 'Rejadagi javonga qo\'ying.',
+      recPB: 'Javonga qo\'ying va hamkor bilan kamomadni tekshiring.',
+      recPO: 'Muammo yo\'q.',
       cellPrefix: 'katak ',
       unknown: 'Noma\'lum',
       mgrName: 'Xojiyev Suxrob',
@@ -337,11 +445,13 @@
       tgOrders: n => `Buyurtmalar: ${n}`,
       tgPlan: n => `Reja: ${n} dona`,
       tgFact: n => `Fakt: ${n} dona`,
+      tgTime: (tot, act) => `⏱ Vaqt: ${tot} (ish: ${act})`,
       tgShort: (c, u) => `🔴 Kamomad: ${c} poz. (-${u} dona)`,
-      tgMis: (c, u) => `🟡 Noto'g'ri joy: ${c} poz. (${u} dona)`,
+      tgMis: (c, u) => `🟡 Joyida emas: ${c} poz. (${u} dona)`,
       tgAcc: (c, u) => `⚠️ Qabulda: ${c} poz. (${u} dona)`,
       tgRet: (c, u) => `🔴 Qaytarishlar: ${c} poz. (${u} dona)`,
       tgSur: (c, u) => `⛔ Begona: ${c} poz. (+${u} dona)`,
+      tgPartner: (c, u) => `🤝 Hamkor (SX/RX) muammoli: ${c} poz. (${u} dona)`,
       sheetName: 'Inventarizatsiya akti',
       xTitle: 'PVZ OMBOR INVENTARIZATSIYA AKTI',
       xPvz: 'Berish punkti:',
@@ -358,10 +468,12 @@
       xSumPlan: 'Reja bo\'yicha mahsulotlar:',
       xSumScanned: 'Jami skanerlangan mahsulotlar:',
       xSumShort: 'Sof kamomad (omborda topilmadi):',
-      xSumMis: 'Noto\'g\'ri katak (boshqa javonda turibdi):',
+      xSumMis: 'Noto\'g\'ri javondagi buyurtmalar:',
       xSumAcc: 'Qabuldagi buyurtmalar (to\'liq qabul qilinmagan):',
-      xSumRet: 'Bekor qilingan / Qaytarishlar (omborga jo\'natish):',
+      xSumRet: 'Bekor qilingan / qaytarishlar (omborga jo\'natish):',
       xSumSur: 'Begona mahsulotlar (PVZ ga tegishli emas):',
+      xSumPartner: 'Hamkor (SX/RX) buyurtmalari muammoli:',
+      xSumTime: 'Sarflangan vaqt (umumiy / ish):',
       xStPlanToIssue: 'Berish rejasi',
       xStPlanPcs: 'Reja donalari',
       xStFact: 'Ombordagi fakt',
@@ -370,34 +482,47 @@
       xStAcc: n => `${n} dona (katakda qoldiring, qabulni o'tkazing)`,
       xStRet: n => `${n} dona (zudlik bilan javondan olib omborga)`,
       xStSur: n => `+${n} dona qaytarish qutisiga`,
+      xStPartner: n => `${n} dona muammoli`,
+      xStTime: (act, s, e) => `Ish vaqti: ${act} · ${s} dan ${e} gacha`,
       xS1: 'BO\'LIM 1. KAMOMAD (OMBORDA YO\'Q BUYURTMALAR)',
-      xS2: 'BO\'LIM 2. KATAKLAR ALMASHUVI (OMBORDA, LEKIN BOSHQA JAVONDA)',
+      xS2: 'BO\'LIM 2. NOTO\'G\'RI JAVONDAGI BUYURTMALAR (OMBORDA, LEKIN BOSHQA JAVONDA)',
       xS3: 'BO\'LIM 3. QABULDAGI MAHSULOTLAR (TO\'LIQ QABUL QILINMAGAN — OMBORGA YUBORMANG!)',
       xS4: 'BO\'LIM 4. BEKOR QILINGAN BUYURTMALAR VA QAYTARISHLAR (ZUDLIK BILAN JAVONDAN OLING)',
       xS5: 'BO\'LIM 5. BEGONA MAHSULOTLAR VA ANIQLANMAGAN ORTIQCHALAR',
+      xS6: 'BO\'LIM 6. HAMKOR BUYURTMALARI (SX / RX) — BARCHASI VA HOLATI',
       xOkShort: '✓ Kamomad aniqlanmadi. Barcha mijoz buyurtmalari joyida!',
       xOkMis: '✓ Topilgan buyurtmalar barchasi o\'z joyida.',
       xOkAcc: '✓ Tugallanmagan qabul holatidagi mahsulotlar topilmadi.',
       xOkRet: '✓ Javonlarda unutilgan bekor qilingan buyurtma yoki qaytarish topilmadi.',
       xOkSur: '✓ Omborda ortiqcha yoki begona jo\'natmalar topilmadi.',
-      xHdrS1: ['№', 'Buyurtma raqami (PID)', 'WMS ID', 'Shtrixkod (SKU / Joy)', 'Yetishmaydi', 'Reja bo\'yicha javon', 'Qayerda topildi', 'Mijoz', 'Telefon'],
-      xHdrS2: ['№', 'Buyurtma raqami (PID)', 'WMS ID', 'Shtrixkod (SKU / Joy)', 'Miqdor', 'Reja bo\'yicha javon', 'Haqiqatda qayerda', 'Mijoz', 'Harakat'],
-      xHdrS3: ['№', 'O\'qilgan shtrixkod / Joy', 'Buyurtma ID', 'Miqdor', 'Javon', 'WMS holati', '', '', 'Tavsiya etilgan harakat'],
-      xHdrS5: ['№', 'O\'qilgan shtrixkod / Joy', 'Miqdor', 'Qayerda topildi (javon)', 'Holat', '', '', '', 'Tavsiya etilgan harakat'],
+      xOkPartner: 'Ushbu inventarizatsiyada hamkor buyurtmalari (SX / RX) yo\'q.',
+      xHdrS1: ['№', 'Buyurtma raqami (PID)', 'WMS ID', 'Kod (SKU / Joy)', 'Yetishmaydi', 'Reja bo\'yicha javon', 'Qayerda topildi', 'Mijoz', 'Telefon'],
+      xHdrS2: ['№', 'Buyurtma raqami (PID)', 'WMS ID', 'Kod (SKU / Joy)', 'Miqdor', 'Reja bo\'yicha javon', 'Haqiqatda qayerda', 'Mijoz', 'Harakat'],
+      xHdrS3: ['№', 'O\'qilgan kod / Joy', 'Buyurtma ID', 'Miqdor', 'Javon', 'WMS holati', '', '', 'Tavsiya etilgan harakat'],
+      xHdrS5: ['№', 'O\'qilgan kod', 'Miqdor', 'Qayerda topildi (javon)', 'Holat', '', '', '', 'Tavsiya etilgan harakat'],
+      xHdrS6: ['№', 'Buyurtma (PID)', 'WMS ID', 'Holat', 'Reja (dona)', 'Fakt (dona)', 'Qayerda turibdi', 'Mijoz', 'Tavsiya'],
       xNotFound: 'TOPILMADI',
       xActS2: n => `${n} katakka o'tkazish`,
       xActS3: 'Katakda qoldiring! WMS da qabulni yakunlang',
       xActS4: 'Javondan oling! Qaytarish omboriga jo\'nating',
       xActS5: 'Qaytarish qutisiga ajratib qo\'ying',
       xStatusRetShort: 'Yakunlangan (jo\'natma)',
-      xForeignStatus: 'Boshqa PVZ / ro\'yxatda yo\'q',
-      xSaved: 'Bazaga saqlangan'
+      xForeignStatus: 'Boshqa PVZ / ro\'yxatda yo\'q'
     }
   };
 
   let LANG = 'ru';
+  let lastLocaleAt = 0;
 
-  // ---------------------------------------------------------------- storage scan
+  function t(key, ...args) {
+    const dict = I18N[LANG] || I18N.ru;
+    let v = dict[key];
+    if (v === undefined) v = I18N.ru[key];
+    if (v === undefined) return key;
+    return typeof v === 'function' ? v(...args) : v;
+  }
+
+  // ---------------------------------------------------------------- storage / locale
   function readAllStorage() {
     const out = [];
     for (const s of [sessionStorage, localStorage]) {
@@ -427,52 +552,37 @@
 
   function detectLocale() {
     const items = readAllStorage();
-
     const direct = items.find(i => i.key === 'locale');
     if (direct && typeof direct.parsed !== 'object') {
       const v = String(direct.parsed ?? direct.raw);
       return /^uz/i.test(v) ? 'uz' : 'ru';
     }
-
     for (const i of items) {
       const loc = findDeep(i.parsed, 'locale');
-      if (typeof loc === 'string' && loc) {
-        return /^uz/i.test(loc) ? 'uz' : 'ru';
-      }
+      if (typeof loc === 'string' && loc) return /^uz/i.test(loc) ? 'uz' : 'ru';
     }
     return 'ru';
   }
 
-  function refreshLocale() { LANG = detectLocale(); }
-
-  function t(key, ...args) {
-    const dict = I18N[LANG] || I18N.ru;
-    let v = dict[key];
-    if (v === undefined) v = I18N.ru[key];
-    if (v === undefined) return key;
-    return typeof v === 'function' ? v(...args) : v;
+  // Storage'ni har safar o'qimaslik uchun 30 sekundda bir marta yangilanadi
+  function refreshLocale(force) {
+    const now = Date.now();
+    if (!force && now - lastLocaleAt < 30000) return;
+    lastLocaleAt = now;
+    LANG = detectLocale();
   }
 
-  // ---------------------------------------------------------------- user (ревизор)
   function titleCase(s) {
     return String(s || '').toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (m, p, c) => p + c.toUpperCase());
   }
 
   function getAuditorName() {
-    const items = readAllStorage();
     let info = null;
-
-    for (const i of items) {
+    for (const i of readAllStorage()) {
       const u = findDeep(i.parsed, 'userInfo');
-      if (u && typeof u === 'object' && (u.firstName || u.lastName)) {
-        info = u;
-        break;
-      }
+      if (u && typeof u === 'object' && (u.firstName || u.lastName)) { info = u; break; }
     }
-
-    if (info) {
-      return titleCase(`${info.firstName || ''} ${info.lastName || ''}`.trim());
-    }
+    if (info) return titleCase(`${info.firstName || ''} ${info.lastName || ''}`.trim());
     return t('unknown');
   }
 
@@ -495,41 +605,85 @@
     return { firstName: c.firstName || '', lastName: c.lastName || '', phone: maskPhone(c.phone) };
   }
 
+  function fullName(c) {
+    return `${c?.firstName || ''} ${c?.lastName || ''}`.trim() || t('noName');
+  }
+
   function sanitizeFileName(s) {
     return String(s).replace(/[\\/:*?"<>|]+/g, '_');
   }
 
   function $(id) { return document.getElementById(id); }
 
-  // Buyurtma ID si: b2cOrderId, orderId yoki id
+  const pad2 = n => String(n).padStart(2, '0');
+
+  // ms -> HH:MM:SS
+  function fmtDur(ms) {
+    const s = Math.floor(Math.max(0, ms || 0) / 1000);
+    return `${pad2(Math.floor(s / 3600))}:${pad2(Math.floor((s % 3600) / 60))}:${pad2(s % 60)}`;
+  }
+
+  // ms -> HH:MM (soat:daqiqa)
+  function fmtClock(ms) {
+    if (!ms) return '—';
+    const d = new Date(ms);
+    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  }
+
   function normOrderId(o) {
     const v = o?.b2cOrderId ?? o?.orderId ?? o?.id;
     return v == null ? '' : String(v);
   }
 
-  // Ommaviy PID
   function normPid(o) {
     return String(o?.b2cOrderPublicId ?? o?.b2cPublicOrderId ?? o?.orderNumber ?? '').trim();
   }
 
-  // Shtrixkod: b2cOrderBarcode yoki orderBarcode
   function normBarcode(o) {
     return String(o?.b2cOrderBarcode ?? o?.orderBarcode ?? '').trim();
   }
 
-  // UZUM BANK buyurtmasimi (aerOrder yoki UZUM-BANK shtrixkodi)
+  // PID yoki shtrixkod boshidagi SX / RX belgisi
+  function partnerTagOf(...vals) {
+    for (const v of vals) {
+      const s = String(v == null ? '' : v).trim();
+      const m = s.match(PARTNER_RE);
+      if (m) return m[1].toUpperCase();
+    }
+    return '';
+  }
+
+  // UZUM BANK buyurtmasimi. SX/RX (hamkor) buyurtmalari bank hisoblanmaydi.
   function isBankOrder(o) {
     if (!o) return false;
+    if (partnerTagOf(normPid(o), normBarcode(o))) return false;
     if (o.aerOrder === true) return true;
     return normBarcode(o).toUpperCase().startsWith('UZUM-BANK');
   }
 
-  // Mahsulot ro'yxatini so'rash mumkinmi (oddiy buyurtma)
+  function isPartnerByType(...objs) {
+    return objs.some(o => {
+      if (!o || typeof o !== 'object') return false;
+      if (o.partner === true || o.isPartner === true) return true;
+      const typeStr = [o.orderType, o.type, o.deliveryType, o.sourceType]
+        .filter(v => typeof v === 'string')
+        .join(' ')
+        .toUpperCase();
+      return /PARTNER|HAMKOR/.test(typeStr);
+    });
+  }
+
+  function detectKind(header, withItems, pidStr, barcodeStr) {
+    if (isBankOrder(header)) return { kind: 'BANK', tag: '' };
+    const tag = partnerTagOf(pidStr, barcodeStr);
+    if (tag || isPartnerByType(header, withItems)) return { kind: 'PARTNER', tag };
+    return { kind: 'ORDER', tag: '' };
+  }
+
   function isItemable(h) {
     return !!h && h.b2cOrderId != null && !isBankOrder(h);
   }
 
-  // Katak nomini API javobidagi maydonlardan izlaydi
   const CELL_KEYS = ['cellBarcode', 'cellKey', 'cell', 'cellInfo', 'cellCode', 'cellNumber', 'cellName'];
   function extractCell(...srcs) {
     for (const src of srcs) {
@@ -540,33 +694,64 @@
         if (v != null && String(v).trim() !== '') return String(v).trim();
       }
     }
-    return 'БЕЗ_ЯЧЕЙКИ';
+    return NO_CELL;
   }
 
   function isNoCell(c) {
-    return !c || c === 'БЕЗ_ЯЧЕЙКИ' || c === 'null';
+    return !c || c === NO_CELL || c === 'null';
   }
 
   function cellLabel(c) {
     return isNoCell(c) ? t('unknown') : c;
   }
 
-  // Katak nomini solishtirish uchun: bo'shliqsiz, katta harf
   function normCell(s) {
     return String(s).replace(/\s+/g, '').toUpperCase();
   }
 
-  // Hisobot uchun PID matni (UZUM BANK bo'lsa belgi bilan)
+  function kindTag(r) {
+    if (!r) return '';
+    if (r.kind === 'BANK') return t('badgeBank');
+    if (r.kind === 'PARTNER') return r.tag ? `${t('badgePartner')} · ${r.tag}` : t('badgePartner');
+    return '';
+  }
+
   function pidText(r) {
     const base = r.pid || r.orderId;
-    return r.kind === 'BANK' ? `${base} (UZUM BANK)` : String(base);
+    const k = kindTag(r);
+    return k ? `${base} (${k})` : String(base);
+  }
+
+  function kindBadgeHtml(r) {
+    if (!r || !r.kind || r.kind === 'ORDER') return '';
+    const cls = r.kind === 'BANK' ? 's-info' : 's-par';
+    return ` <span class="uz-tag ${cls}">${escHtml(kindTag(r))}</span>`;
   }
 
   function pidHtml(r) {
-    const base = escHtml(r.pid || r.orderId);
-    return r.kind === 'BANK'
-      ? `<b>${base}</b> <span class="rv-tag s-info">${escHtml(t('badgeBank'))}</span>`
-      : `<b>${base}</b>`;
+    return `<b>${escHtml(r.pid || r.orderId)}</b>${kindBadgeHtml(r)}`;
+  }
+
+  function statusText(st) {
+    const map = { OK: t('statusOk'), SHORT: t('statusShort'), MIS: t('statusMis'), BOTH: t('statusBoth') };
+    return map[st] || '';
+  }
+
+  function statusCls(st) {
+    return { OK: 's-ok', SHORT: 's-bad', MIS: 's-warn', BOTH: 's-bad' }[st] || 's-mut';
+  }
+
+  function partnerAction(st) {
+    const map = { OK: t('recPO'), SHORT: t('recPS'), MIS: t('recPM'), BOTH: t('recPB') };
+    return map[st] || '';
+  }
+
+  function plainFound(list) {
+    return list && list.length ? list.map(f => `${f.cell} (${f.qty})`).join(', ') : t('notFoundShort');
+  }
+
+  function safeCustomerName(c) {
+    return escHtml(c?.firstName || '');
   }
 
   // ---------------------------------------------------------------- token
@@ -594,7 +779,6 @@
         if (matches) for (const tk of matches) if (isTokenValid(tk)) return tk;
       }
     } catch (e) {}
-
     for (const s of [sessionStorage, localStorage]) {
       try {
         for (let i = 0; i < s.length; i++) {
@@ -692,7 +876,7 @@
     return { 'accept': 'application/json', 'authorization': `Bearer ${token}` };
   }
 
-  // ---------------------------------------------------------------- header detection
+  // ---------------------------------------------------------------- sahifa sarlavhasi (PVZ va ID)
   function insideOurUi(el) {
     return !!(el.closest && (el.closest('#uzum-inv-modal') || el.closest('#uzum-inv-btn')));
   }
@@ -751,9 +935,7 @@
         }
       }
     } catch (e) {}
-
     if (window.__lastLiveDpKey) return window.__lastLiveDpKey;
-
     try {
       const appEl = document.querySelector('#app') || document.querySelector('#root');
       const pinia = appEl?.__vue_app__?.config?.globalProperties?.$pinia;
@@ -766,16 +948,118 @@
     return null;
   }
 
-  function detectOrdersCount() {
+  // Sahifadagi "К выдаче N" sonini qat'iy o'qiydi (aniq topilmasa null)
+  function readIssueCountStrict() {
     const all = Array.from(document.querySelectorAll('*'));
     for (const el of all) {
       if (insideOurUi(el)) continue;
-      if (el.children.length <= 2 && el.textContent && el.textContent.includes('К выдаче')) {
-        const m = el.textContent.match(/К выдаче\s*(\d+)/i) || el.textContent.match(/(\d+)/);
-        if (m && m[1]) return m[1];
-      }
+      if (el.children.length > 2) continue;
+      const m = (el.textContent || '').match(/К выдаче\s*(\d+)/i);
+      if (m) return Number(m[1]);
     }
-    return '—';
+    return null;
+  }
+
+  function detectOrdersCount() {
+    const c = readIssueCountStrict();
+    return c == null ? '—' : String(c);
+  }
+
+  // ---------------------------------------------------------------- dpKey tekshiruvi
+  // Yuklashdan oldin ID WMS'da tekshiriladi. Xato bo'lsa, qoldiqlar yuklanmaydi.
+  async function validateDpKey(dpKey) {
+    if (!dpKey) throw new Error(t('dpEmpty'));
+    if (!DPKEY_RE.test(dpKey)) throw new Error(t('dpFormat'));
+
+    const headers = authHeaders();
+    let data;
+    try {
+      data = await fetchJson(
+        `${API_V3}/orders?page=0&size=1&status=DELIVERED%2CTEMP_DELIVERED&deliveryPointKey=${encodeURIComponent(dpKey)}&sortField=accepted_date&direction=ASC`,
+        headers, 15000, 1
+      );
+    } catch (e) {
+      if (e && e.isAccessError) throw e;
+      throw new Error(`${t('dpInvalid', dpKey)}\n${e && e.message ? e.message : ''}`.trim());
+    }
+
+    const isList = Array.isArray(data) || (data && Array.isArray(data.content));
+    if (!isList) throw new Error(t('dpInvalid', dpKey));
+
+    const total = !Array.isArray(data) && typeof data.totalElements === 'number' ? data.totalElements : null;
+    return { total };
+  }
+
+  // ---------------------------------------------------------------- ish vaqti
+  // Faol vaqt: ketma-ket harakatlar orasidagi vaqt hisoblanadi. Tanaffus
+  // IDLE_LIMIT_MS dan uzoq bo'lsa, faqat shu chegarasi hisobga olinadi.
+  const timing = { startedAt: 0, endedAt: 0, activeMs: 0, lastActivityAt: 0, running: false };
+
+  function resetTiming() {
+    timing.startedAt = 0;
+    timing.endedAt = 0;
+    timing.activeMs = 0;
+    timing.lastActivityAt = 0;
+    timing.running = false;
+  }
+
+  function startTiming() {
+    const now = Date.now();
+    timing.startedAt = now;
+    timing.endedAt = 0;
+    timing.activeMs = 0;
+    timing.lastActivityAt = now;
+    timing.running = true;
+  }
+
+  function markActivity() {
+    if (!timing.running) return;
+    const now = Date.now();
+    timing.activeMs += Math.min(Math.max(0, now - timing.lastActivityAt), IDLE_LIMIT_MS);
+    timing.lastActivityAt = now;
+  }
+
+  function finishTiming() {
+    if (!timing.running) return;
+    const now = Date.now();
+    timing.activeMs += Math.min(Math.max(0, now - timing.lastActivityAt), IDLE_LIMIT_MS);
+    timing.lastActivityAt = now;
+    timing.endedAt = now;
+    timing.running = false;
+  }
+
+  function timingSnapshot() {
+    const now = Date.now();
+    const endedAt = timing.running ? now : timing.endedAt;
+    const tail = timing.running ? Math.min(Math.max(0, now - timing.lastActivityAt), IDLE_LIMIT_MS) : 0;
+    return {
+      startedAt: timing.startedAt,
+      endedAt,
+      totalMs: timing.startedAt && endedAt ? Math.max(0, endedAt - timing.startedAt) : 0,
+      activeMs: timing.activeMs + tail
+    };
+  }
+
+  function timeMetaHtml(scanned) {
+    const tm = timingSnapshot();
+    const hrs = tm.activeMs / 3600000;
+    const speed = tm.activeMs >= 60000 && scanned > 0 ? t('speedVal', Math.round(scanned / hrs)) : t('speedNA');
+    const items = [
+      [t('timeStart'), fmtClock(tm.startedAt)],
+      [t('timeTotal'), fmtDur(tm.totalMs)],
+      [t('timeActive'), fmtDur(tm.activeMs)],
+      [t('timeSpeed'), speed]
+    ];
+    return items.map(([k, v]) => `<span class="uz-chip">${escHtml(k)} <b>${escHtml(v)}</b></span>`).join('');
+  }
+
+  function updateTimerUI() {
+    const a = $('u-timer');
+    if (!a) return;
+    const tm = timingSnapshot();
+    a.textContent = fmtDur(tm.activeMs);
+    const tot = $('u-timer-total');
+    if (tot) tot.textContent = `${t('timeTotal')}: ${fmtDur(tm.totalMs)}`;
   }
 
   // ---------------------------------------------------------------- sound
@@ -814,7 +1098,7 @@
   // ---------------------------------------------------------------- state
   const state = {
     activePvzName: 'ПВЗ',
-    dpKey: null,
+    dpKey: '',
     totalOrdersCount: 0,
     totalPlanUnits: 0,
     totalScannedUnits: 0,
@@ -833,7 +1117,8 @@
     screen: 'start',
     workScreen: 'start',
     lastReport: null,
-    savedInSession: false
+    savedInSession: false,
+    loading: false
   };
 
   function resetInventoryState() {
@@ -868,7 +1153,6 @@
 
     const cleanCode = encodeURIComponent(cacheKey);
     const needle = cacheKey.toLowerCase();
-
     const candidateUrls = [
       `${API}/shipments/search?code=${cleanCode}&dpKey=${dpKey}`,
       `${API}/search-shipments?code=${cleanCode}&dpKey=${dpKey}`,
@@ -888,7 +1172,6 @@
           result = {
             type: 'ACCEPTANCE',
             orderId: normOrderId(rawObj) || rawObj?.externalId || '',
-            cargoPlace: rawObj?.cargoPlaceBarcode || rawObj?.barcode || '',
             statusText: t('statusAcceptance')
           };
           break;
@@ -899,7 +1182,6 @@
           result = {
             type: 'RETURN',
             orderId: normOrderId(rawObj) || '',
-            cargoPlace: rawObj?.cargoPlaceBarcode || rawObj?.barcode || '',
             statusText: t('statusReturn')
           };
           break;
@@ -920,7 +1202,7 @@
     if (!dpKey) throw new Error(t('errNoDpKey'));
     authHeaders();
 
-    // 1) Buyurtmalar ro'yxati (UZUM BANK ham shu yerda)
+    // 1) Buyurtmalar ro'yxati (UZUM BANK va SX/RX ham shu yerda)
     let page = 0;
     const size = 100;
     const orderHeaders = [];
@@ -990,6 +1272,7 @@
       const barcodeStr = normBarcode(header) || normBarcode(withItems);
       const pidShown = pidStr || (isBank ? barcodeStr : orderIdStr);
       const customer = header.customer || withItems.customer || {};
+      const kinfo = detectKind(header, withItems, pidStr, barcodeStr);
 
       // Skaner o'qishi mumkin bo'lgan barcha variantlar
       const uniq = new Set();
@@ -1009,17 +1292,15 @@
       }
 
       const addCargo = (arr) => {
-        if (Array.isArray(arr)) {
-          arr.forEach(c => {
-            const code = typeof c === 'object' ? c?.barcode : c;
-            if (code) {
-              const s = String(code).trim();
-              uniq.add(s);
-              const m = s.match(/^10-(\d{10})-\d+$/);
-              if (m) uniq.add(String(parseInt(m[1], 10)));
-            }
-          });
-        }
+        if (!Array.isArray(arr)) return;
+        arr.forEach(c => {
+          const code = typeof c === 'object' ? c?.barcode : c;
+          if (!code) return;
+          const s = String(code).trim();
+          uniq.add(s);
+          const m = s.match(/^10-(\d{10})-\d+$/);
+          if (m) uniq.add(String(parseInt(m[1], 10)));
+        });
       };
       addCargo(header.cargoPlaceBarcodes);
       addCargo(header.cargoPlaces);
@@ -1048,7 +1329,7 @@
         if (Array.isArray(it.barcodes)) it.barcodes.forEach(b => b && skuCodes.add(String(b).trim()));
       });
 
-      // UZUM BANK yoki items bo'sh: reja 1 dona, katak buyurtma darajasidan (cellInfo)
+      // UZUM BANK yoki items bo'sh: reja 1 dona, katak buyurtma darajasidan
       if (itemsQty === 0) itemsQty = 1;
       if (Object.keys(cells).length === 0) {
         cells[extractCell(header, withItems)] = itemsQty;
@@ -1059,9 +1340,10 @@
       state.ordersMap[orderIdStr] = {
         orderId: orderIdStr,
         pid: pidShown,
-        kind: isBank ? 'BANK' : 'ORDER',
+        kind: kinfo.kind,
+        tag: kinfo.tag,
         cells,
-        expectedCell: realCells.join(', ') || 'БЕЗ_ЯЧЕЙКИ',
+        expectedCell: realCells.join(', ') || NO_CELL,
         customer,
         planQty: itemsQty,
         itemSkus,
@@ -1127,7 +1409,6 @@
         return { orderId, viaSku: false };
       }
     }
-
     return null;
   }
 
@@ -1136,9 +1417,11 @@
     return k || code;
   }
 
+  // SX / RX kodlari katak sifatida tanilmaydi
   function looksLikeCell(code) {
     if (Object.keys(state.planCellUnits).some(c => normCell(c) === normCell(code))) return true;
     if (state.codeToOrderId[code] || state.skuIndex[code]) return false;
+    if (PARTNER_RE.test(code)) return false;
     if (/^10-\d{10}-\d+$/.test(code)) return false;
     if (/^UZUM-BANK-/i.test(code)) return false;
     if (/^\d{8,}$/.test(code)) return false;
@@ -1150,15 +1433,15 @@
     scanChain = scanChain.then(() => processScan(code)).catch(e => console.error('scan error', e));
   }
 
-  async function processScan(code) {
-    code = String(code || '').trim();
+  async function processScan(raw) {
+    const code = String(raw || '').trim();
     if (!code) return;
 
     if (looksLikeCell(code)) {
       state.activeCell = canonicalCell(code);
       if (!state.factCellUnits[state.activeCell]) state.factCellUnits[state.activeCell] = {};
       soundCell();
-      updateScannerUI();
+      updateScannerUI(code, 'CELL', t('hintScanItems'));
       return;
     }
 
@@ -1170,7 +1453,6 @@
     }
 
     const resolved = resolveBarcode(code, cell);
-
     if (resolved) {
       const { orderId, viaSku, full } = resolved;
       const order = state.ordersMap[orderId];
@@ -1187,7 +1469,6 @@
       state.factCellUnits[cell][orderId] = (state.factCellUnits[cell][orderId] || 0) + 1;
       state.factGlobal[orderId] = (state.factGlobal[orderId] || 0) + 1;
       state.totalScannedUnits++;
-
       state.scannedHistory.push({ cell, code, type: 'ORDER', orderId });
 
       soundOk();
@@ -1196,45 +1477,33 @@
     }
 
     updateScannerUI(code, 'SEARCH', t('msgSearching'));
-    const deepStatus = await deepLookupShipmentStatus(code);
+    const deep = await deepLookupShipmentStatus(code);
 
-    if (deepStatus && deepStatus.type === 'ACCEPTANCE') {
+    if (deep && deep.type === 'ACCEPTANCE') {
       if (!state.acceptanceScans[cell]) state.acceptanceScans[cell] = {};
       if (state.acceptanceScans[cell][code]) {
         soundDuplicate();
         updateScannerUI(code, 'INFO', t('msgAcceptanceDup'));
         return;
       }
-      state.acceptanceScans[cell][code] = {
-        orderId: deepStatus.orderId,
-        cargoPlace: deepStatus.cargoPlace,
-        statusText: deepStatus.statusText,
-        count: 1
-      };
+      state.acceptanceScans[cell][code] = { orderId: deep.orderId, statusText: deep.statusText, count: 1 };
       state.totalScannedUnits++;
-      state.scannedHistory.push({ cell, code, type: 'ACCEPTANCE', meta: deepStatus });
-
+      state.scannedHistory.push({ cell, code, type: 'ACCEPTANCE' });
       soundAcceptance();
       updateScannerUI(code, 'ACCEPTANCE', t('msgAcceptanceHint'));
       return;
     }
 
-    if (deepStatus && deepStatus.type === 'RETURN') {
+    if (deep && deep.type === 'RETURN') {
       if (!state.returnScans[cell]) state.returnScans[cell] = {};
       if (state.returnScans[cell][code]) {
         soundDuplicate();
         updateScannerUI(code, 'INFO', t('msgReturnDup'));
         return;
       }
-      state.returnScans[cell][code] = {
-        orderId: deepStatus.orderId,
-        cargoPlace: deepStatus.cargoPlace,
-        statusText: deepStatus.statusText,
-        count: 1
-      };
+      state.returnScans[cell][code] = { orderId: deep.orderId, statusText: deep.statusText, count: 1 };
       state.totalScannedUnits++;
-      state.scannedHistory.push({ cell, code, type: 'RETURN', meta: deepStatus });
-
+      state.scannedHistory.push({ cell, code, type: 'RETURN' });
       soundReturn();
       updateScannerUI(code, 'RETURN', t('msgReturnHint'));
       return;
@@ -1244,13 +1513,15 @@
     state.foreignScans[cell][code] = (state.foreignScans[cell][code] || 0) + 1;
     state.totalScannedUnits++;
     state.scannedHistory.push({ cell, code, type: 'FOREIGN' });
-
     soundSurplus();
     updateScannerUI(code, 'FOREIGN', t('msgForeignHint'));
   }
 
   function undoLastScan() {
-    if (state.scannedHistory.length === 0) return;
+    if (state.scannedHistory.length === 0) {
+      updateScannerUI(null, 'INFO', t('msgNothingToUndo'));
+      return;
+    }
     const last = state.scannedHistory.pop();
     state.totalScannedUnits = Math.max(0, state.totalScannedUnits - 1);
 
@@ -1274,11 +1545,19 @@
         if (f[last.code] <= 0) delete f[last.code];
       }
     }
-
-    updateScannerUI('—', 'INFO', t('msgUndone', last.code));
+    updateScannerUI(null, 'INFO', t('msgUndone', last.code));
   }
 
   // ---------------------------------------------------------------- report
+  function foundCellsOf(orderId) {
+    const res = [];
+    Object.keys(state.factCellUnits).forEach(cell => {
+      const q = state.factCellUnits[cell][orderId] || 0;
+      if (q > 0) res.push({ cell, qty: q });
+    });
+    return res;
+  }
+
   function buildReport() {
     const report = {
       pureShortages: [],
@@ -1286,69 +1565,77 @@
       inAcceptance: [],
       canceledReturns: [],
       pureSurplus: [],
+      partnerOrders: [],
       totalShortageUnits: 0,
       totalMismatchUnits: 0,
       totalAcceptanceUnits: 0,
       totalReturnUnits: 0,
-      totalSurplusUnits: 0
+      totalSurplusUnits: 0,
+      totalPartnerUnits: 0
     };
 
-    const skuOf = (orderId, order) => order.itemSkus.length > 0 ? order.itemSkus[0].sku : `10-${orderId.padStart(10, '0')}-1`;
+    const skuOf = order => (order.itemSkus.length ? order.itemSkus[0].sku : `10-${order.orderId.padStart(10, '0')}-1`);
 
-    // 1) Kamomad
     Object.entries(state.ordersMap).forEach(([orderId, order]) => {
-      const factQty = state.factGlobal[orderId] || 0;
-      if (factQty < order.planQty) {
-        const diff = order.planQty - factQty;
-        report.totalShortageUnits += diff;
-        report.pureShortages.push({
-          orderId,
-          pid: order.pid,
-          kind: order.kind,
-          sku: skuOf(orderId, order),
-          missingCount: diff,
-          expectedCell: order.expectedCell,
-          customer: safeCustomer(order.customer)
+      const fact = state.factGlobal[orderId] || 0;
+      const short = Math.max(0, order.planQty - fact);
+      const found = foundCellsOf(orderId);
+      const hasCells = !Object.keys(order.cells).every(isNoCell);
+
+      const misByCell = [];
+      if (hasCells) {
+        found.forEach(f => {
+          const extra = f.qty - (order.cells[f.cell] || 0);
+          if (extra > 0) misByCell.push({ cell: f.cell, count: extra });
         });
       }
-    });
+      const misQty = misByCell.reduce((a, m) => a + m.count, 0);
 
-    // 2) Pereсort: rejadagidan ortiq topilgan qism
-    Object.entries(state.ordersMap).forEach(([orderId, order]) => {
-      if (Object.keys(order.cells).every(isNoCell)) return;
+      const base = {
+        orderId,
+        pid: order.pid,
+        kind: order.kind,
+        tag: order.tag,
+        sku: skuOf(order),
+        expectedCell: order.expectedCell,
+        customer: safeCustomer(order.customer)
+      };
 
-      Object.keys(state.factCellUnits).forEach(actualCell => {
-        const qty = state.factCellUnits[actualCell][orderId] || 0;
-        const expectedHere = order.cells[actualCell] || 0;
-        const extra = qty - expectedHere;
+      // Hamkor (SX/RX) buyurtmalari alohida bo'limda
+      if (order.kind === 'PARTNER') {
+        let status = 'OK';
+        if (short > 0 && misQty > 0) status = 'BOTH';
+        else if (short > 0) status = 'SHORT';
+        else if (misQty > 0) status = 'MIS';
+        if (status !== 'OK') report.totalPartnerUnits += short + misQty;
+        report.partnerOrders.push({ ...base, planQty: order.planQty, factQty: fact, short, misQty, status, found });
+        return;
+      }
 
-        if (extra > 0) {
-          report.totalMismatchUnits += extra;
-          report.mismatchedCells.push({
-            orderId,
-            pid: order.pid,
-            kind: order.kind,
-            sku: skuOf(orderId, order),
-            count: extra,
-            expectedCell: order.expectedCell,
-            actualCell,
-            customer: safeCustomer(order.customer)
-          });
-        }
+      if (short > 0) {
+        report.totalShortageUnits += short;
+        report.pureShortages.push({ ...base, missingCount: short });
+      }
+      misByCell.forEach(m => {
+        report.totalMismatchUnits += m.count;
+        report.mismatchedCells.push({ ...base, count: m.count, actualCell: m.cell });
       });
     });
 
+    const prio = { BOTH: 0, SHORT: 1, MIS: 2, OK: 3 };
+    report.partnerOrders.sort((a, b) => (prio[a.status] - prio[b.status]) || String(a.pid).localeCompare(String(b.pid)));
+
     Object.entries(state.acceptanceScans).forEach(([cell, items]) => {
-      Object.entries(items).forEach(([code, data]) => {
-        report.totalAcceptanceUnits += data.count;
-        report.inAcceptance.push({ code, orderId: data.orderId, cargoPlace: data.cargoPlace, foundCell: cell, count: data.count, statusText: data.statusText });
+      Object.entries(items).forEach(([code, d]) => {
+        report.totalAcceptanceUnits += d.count;
+        report.inAcceptance.push({ code, orderId: d.orderId, foundCell: cell, count: d.count, statusText: d.statusText });
       });
     });
 
     Object.entries(state.returnScans).forEach(([cell, items]) => {
-      Object.entries(items).forEach(([code, data]) => {
-        report.totalReturnUnits += data.count;
-        report.canceledReturns.push({ code, orderId: data.orderId, cargoPlace: data.cargoPlace, foundCell: cell, count: data.count, statusText: data.statusText });
+      Object.entries(items).forEach(([code, d]) => {
+        report.totalReturnUnits += d.count;
+        report.canceledReturns.push({ code, orderId: d.orderId, foundCell: cell, count: d.count, statusText: d.statusText });
       });
     });
 
@@ -1363,10 +1650,11 @@
     return report;
   }
 
-  // ---------------------------------------------------------------- telegram (fon, UI'siz)
+  // ---------------------------------------------------------------- telegram (fon)
   function buildTelegramText(entry) {
     const s = entry.stats || {};
-    const lines = [
+    const tm = entry.timing || { totalMs: 0, activeMs: 0 };
+    return [
       t('tgTitle'),
       t('tgPvz', entry.pvzName, entry.dpKey),
       t('tgDate', entry.date, entry.time),
@@ -1375,14 +1663,15 @@
       t('tgOrders', s.totalOrders ?? 0),
       t('tgPlan', s.totalPlanUnits ?? 0),
       t('tgFact', s.totalScanned ?? 0),
+      t('tgTime', fmtDur(tm.totalMs), fmtDur(tm.activeMs)),
       '',
       t('tgShort', s.shortageCount ?? 0, s.shortageUnits ?? 0),
       t('tgMis', s.mismatchCount ?? 0, s.mismatchUnits ?? 0),
       t('tgAcc', s.acceptanceCount ?? 0, s.acceptanceUnits ?? 0),
       t('tgRet', s.returnCount ?? 0, s.returnUnits ?? 0),
-      t('tgSur', s.surplusCount ?? 0, s.surplusUnits ?? 0)
-    ];
-    return lines.join('\n');
+      t('tgSur', s.surplusCount ?? 0, s.surplusUnits ?? 0),
+      t('tgPartner', s.partnerCount ?? 0, s.partnerUnits ?? 0)
+    ].join('\n');
   }
 
   async function sendTelegramSilently(text) {
@@ -1414,7 +1703,7 @@
     return false;
   }
 
-  // ---------------------------------------------------------------- xlsx
+  // ---------------------------------------------------------------- xlsx (kutubxonasiz)
   function createRealXlsxBlob(sheets) {
     const encoder = new TextEncoder();
     const crcTable = new Uint32Array(256);
@@ -1445,7 +1734,7 @@
 
     const files = [];
     let ct = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>`;
-    sheets.forEach((_, idx) => ct += `<Override PartName="/xl/worksheets/sheet${idx + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`);
+    sheets.forEach((_, idx) => { ct += `<Override PartName="/xl/worksheets/sheet${idx + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`; });
     ct += `</Types>`;
     files.push({ name: '[Content_Types].xml', data: ct });
 
@@ -1455,12 +1744,12 @@
     });
 
     let wbRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`;
-    sheets.forEach((_, idx) => wbRels += `<Relationship Id="rId${idx + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${idx + 1}.xml"/>`);
+    sheets.forEach((_, idx) => { wbRels += `<Relationship Id="rId${idx + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${idx + 1}.xml"/>`; });
     wbRels += `</Relationships>`;
     files.push({ name: 'xl/_rels/workbook.xml.rels', data: wbRels });
 
     let wb = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>`;
-    sheets.forEach((s, idx) => wb += `<sheet name="${esc(s.name).slice(0, 31)}" sheetId="${idx + 1}" r:id="rId${idx + 1}"/>`);
+    sheets.forEach((s, idx) => { wb += `<sheet name="${esc(s.name).slice(0, 31)}" sheetId="${idx + 1}" r:id="rId${idx + 1}"/>`; });
     wb += `</sheets></workbook>`;
     files.push({ name: 'xl/workbook.xml', data: wb });
 
@@ -1549,7 +1838,6 @@
       dv.setUint32(38, 0, true);
       dv.setUint32(42, fe.offset, true);
       cdh.set(fe.nameBytes, 46);
-
       parts.push(cdh);
       centralDirSize += cdh.length;
     });
@@ -1569,23 +1857,26 @@
     return new Blob(parts, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   }
 
-  function exportCleanXlsx(reportData = null, auditMeta = null) {
+  function exportCleanXlsx(reportData, auditMeta) {
     refreshLocale();
     const report = reportData || state.lastReport || buildReport();
+    const m = auditMeta || {};
     const now = new Date();
-    const dateStr = auditMeta?.date || now.toLocaleDateString('ru-RU');
-    const timeStr = auditMeta?.time || now.toLocaleTimeString('ru-RU');
-    const pvzName = auditMeta?.pvzName || state.activePvzName;
-    const dpKey = auditMeta?.dpKey || state.dpKey;
-    const auditor = auditMeta?.auditor || getAuditorName();
-    const totalOrders = auditMeta?.totalOrders ?? state.totalOrdersCount;
-    const totalPlanUnits = auditMeta?.totalPlanUnits ?? state.totalPlanUnits;
-    const totalScanned = auditMeta?.totalScanned ?? state.totalScannedUnits;
+    const dateStr = m.date || now.toLocaleDateString('ru-RU');
+    const timeStr = m.time || now.toLocaleTimeString('ru-RU');
+    const pvzName = m.pvzName || state.activePvzName;
+    const dpKey = m.dpKey || state.dpKey;
+    const auditor = m.auditor || getAuditorName();
+    const totalOrders = m.totalOrders ?? state.totalOrdersCount;
+    const totalPlanUnits = m.totalPlanUnits ?? state.totalPlanUnits;
+    const totalScanned = m.totalScanned ?? state.totalScannedUnits;
+    const partners = report.partnerOrders || [];
+    const partnerIssues = partners.filter(p => p.status !== 'OK');
 
-    const fullName = c => `${c?.firstName || ''} ${c?.lastName || ''}`.trim() || t('noName');
+    // Vaqt: tarixdan olinsa o'sha yozuv, joriy ko'rinishda hozirgi sessiya
+    const tm = auditMeta ? (auditMeta.timing || null) : (timing.startedAt ? timingSnapshot() : null);
 
     const rows = [];
-
     rows.push([t('xTitle')]);
     rows.push([t('xPvz'), `${pvzName} (ID: ${dpKey})`, '', t('xDate'), `${dateStr} ${timeStr}`]);
     rows.push([t('xMgr'), t('mgrName'), '', t('xStatus'), t('xStatusDone')]);
@@ -1602,6 +1893,12 @@
     rows.push([t('xSumAcc'), report.inAcceptance.length, t('xStAcc', report.totalAcceptanceUnits)]);
     rows.push([t('xSumRet'), report.canceledReturns.length, t('xStRet', report.totalReturnUnits)]);
     rows.push([t('xSumSur'), report.pureSurplus.length, t('xStSur', report.totalSurplusUnits)]);
+    rows.push([t('xSumPartner'), partnerIssues.length, t('xStPartner', report.totalPartnerUnits || 0)]);
+    rows.push([
+      t('xSumTime'),
+      tm ? fmtDur(tm.totalMs) : t('noName'),
+      tm ? t('xStTime', fmtDur(tm.activeMs), fmtClock(tm.startedAt), fmtClock(tm.endedAt)) : t('noName')
+    ]);
     rows.push([]);
 
     rows.push([t('xS1')]);
@@ -1657,8 +1954,19 @@
         rows.push([idx + 1, r.code, `+${t('pcs', r.qty)}`, `${t('cellPrefix')}${r.foundCell}`, t('xForeignStatus'), '', '', '', t('xActS5')]);
       });
     }
+    rows.push([]);
 
-    const colWidths = [6, 26, 14, 24, 14, 18, 18, 28, 22];
+    rows.push([t('xS6')]);
+    if (partners.length === 0) {
+      rows.push([t('xOkPartner')]);
+    } else {
+      rows.push(t('xHdrS6'));
+      partners.forEach((p, idx) => {
+        rows.push([idx + 1, pidText(p), p.orderId, statusText(p.status), p.planQty, p.factQty, plainFound(p.found), fullName(p.customer), partnerAction(p.status)]);
+      });
+    }
+
+    const colWidths = [6, 30, 14, 24, 16, 18, 24, 28, 44];
     const blob = createRealXlsxBlob([{ name: t('sheetName'), rows, cols: colWidths }]);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1693,7 +2001,7 @@
   }
 
   function saveAuditPermanently() {
-    refreshLocale();
+    refreshLocale(true);
     if (state.savedInSession) {
       alert(t('alreadySaved'));
       return;
@@ -1701,6 +2009,8 @@
 
     const report = buildReport();
     const now = new Date();
+    const partnerIssues = report.partnerOrders.filter(p => p.status !== 'OK');
+    const tm = timingSnapshot();
 
     const auditEntry = {
       id: `INV-${Date.now()}`,
@@ -1709,6 +2019,12 @@
       pvzName: state.activePvzName,
       dpKey: state.dpKey,
       auditor: getAuditorName(),
+      timing: {
+        startedAt: tm.startedAt,
+        endedAt: tm.endedAt,
+        totalMs: tm.totalMs,
+        activeMs: tm.activeMs
+      },
       stats: {
         totalOrders: state.totalOrdersCount,
         totalPlanUnits: state.totalPlanUnits,
@@ -1722,26 +2038,28 @@
         returnCount: report.canceledReturns.length,
         returnUnits: report.totalReturnUnits,
         surplusCount: report.pureSurplus.length,
-        surplusUnits: report.totalSurplusUnits
+        surplusUnits: report.totalSurplusUnits,
+        partnerCount: partnerIssues.length,
+        partnerUnits: report.totalPartnerUnits
       },
       report
     };
 
     const list = getHistoryList();
     list.unshift(auditEntry);
-    while (list.length > 100) list.pop();
+    while (list.length > HISTORY_LIMIT) list.pop();
     const saved = writeHistory(list);
 
-    // Telegram faqat muvaffaqiyatli saqlangandan keyin yuboriladi
+    // Telegram va vaqt tugashi faqat muvaffaqiyatli saqlangandan keyin
     if (saved) {
       state.savedInSession = true;
+      finishTiming();
       sendTelegramSilently(buildTelegramText(auditEntry)).then(ok => {
         if (!ok) console.warn('[uzum-inv] telegram: xabar yuborilmadi');
       });
     }
 
     soundSuccess();
-    alert(saved ? t('savedOk', state.activePvzName) : t('saveFail'));
     exportCleanXlsx(report, {
       date: auditEntry.date,
       time: auditEntry.time,
@@ -1750,170 +2068,221 @@
       auditor: auditEntry.auditor,
       totalOrders: auditEntry.stats.totalOrders,
       totalPlanUnits: auditEntry.stats.totalPlanUnits,
-      totalScanned: auditEntry.stats.totalScanned
+      totalScanned: auditEntry.stats.totalScanned,
+      timing: auditEntry.timing
     });
+    alert(saved ? t('savedOk', state.activePvzName) : t('saveFail'));
+    renderHeadActions('report');
   }
 
-  // ---------------------------------------------------------------- UI
+  // ---------------------------------------------------------------- CSS
   const CSS = `
-#uzum-inv-btn{position:fixed;top:12px;left:0;z-index:999999;display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 16px;margin:0;background:linear-gradient(135deg,#14b8a6 0%,#0d9488 100%);color:#fff;border:0;border-radius:12px;cursor:pointer;font:700 13px/1 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;letter-spacing:.1px;white-space:nowrap;box-shadow:0 6px 18px rgba(13,148,136,.35),inset 0 1px 0 rgba(255,255,255,.22);transition:transform .15s ease,box-shadow .2s ease,filter .2s ease;outline:none}
-#uzum-inv-btn:hover{transform:translateY(-1px);filter:brightness(1.05);box-shadow:0 10px 24px rgba(13,148,136,.45),inset 0 1px 0 rgba(255,255,255,.22)}
+#uzum-inv-btn{position:fixed;top:12px;left:0;z-index:999999;display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 16px;margin:0;border:0;border-radius:12px;cursor:pointer;color:#fff;font:700 13px/1 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;white-space:nowrap;background:linear-gradient(135deg,#a78bfa 0%,#7c3aed 100%);box-shadow:0 8px 20px rgba(124,58,237,.35),inset 0 1px 0 rgba(255,255,255,.2);transition:transform .15s ease,box-shadow .2s ease,filter .2s ease;outline:none}
+#uzum-inv-btn:hover{transform:translateY(-1px);filter:brightness(1.06);box-shadow:0 12px 26px rgba(124,58,237,.45),inset 0 1px 0 rgba(255,255,255,.2)}
 #uzum-inv-btn:active{transform:translateY(0)}
-#uzum-inv-btn:focus-visible{box-shadow:0 0 0 3px rgba(45,212,191,.45)}
-#uzum-inv-modal{--bg:#0a0f1d;--surface:#111a2d;--surface-2:#162138;--surface-3:#1d2a45;--border:rgba(148,163,184,.14);--border-strong:rgba(148,163,184,.28);--text:#e7edf8;--muted:#8d9cb6;--primary:#2dd4bf;--primary-strong:#0d9488;--primary-ink:#042f2e;--ok:#22c55e;--bad:#f43f5e;--warn:#f59e0b;--acc:#a78bfa;--ret:#fb923c;--info:#60a5fa;--mut:#94a3b8;--shadow:0 30px 80px rgba(0,0,0,.6);display:none;position:fixed;inset:0;z-index:1000000;align-items:center;justify-content:center;padding:16px;background:rgba(2,6,23,.66);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;color:var(--text);font-size:14px;line-height:1.45}
-@media (prefers-color-scheme:light){#uzum-inv-modal{--bg:#f2f5fb;--surface:#ffffff;--surface-2:#f6f8fc;--surface-3:#e6edf6;--border:#e3e9f2;--border-strong:#cbd5e1;--text:#0f172a;--muted:#64748b;--primary:#0d9488;--primary-strong:#0f766e;--primary-ink:#ffffff;--ok:#16a34a;--bad:#e11d48;--warn:#d97706;--acc:#7c3aed;--ret:#ea580c;--info:#2563eb;--mut:#64748b;--shadow:0 30px 70px rgba(15,23,42,.22)}}
+#uzum-inv-btn:focus-visible{box-shadow:0 0 0 3px rgba(167,139,250,.5)}
+
+#uzum-inv-modal{--bg:#f5f3fc;--side:#ffffff;--surface:#ffffff;--surface-2:#f2eefb;--surface-3:#e9e2f8;--line:#e6dff4;--line-2:#d5c9ea;--text:#1d1538;--muted:#6e6792;--primary:#7c3aed;--primary-2:#a855f7;--primary-ink:#ffffff;--ok:#059669;--bad:#e11d48;--warn:#d97706;--acc:#0284c7;--ret:#ea580c;--info:#4f46e5;--par:#c026d3;--mut:#64748b;--shadow:0 30px 80px rgba(46,16,101,.22);display:none;position:fixed;inset:0;z-index:1000000;align-items:center;justify-content:center;padding:20px;background:rgba(30,20,60,.45);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;font-size:14px;line-height:1.45;color:var(--text)}
+@media (prefers-color-scheme:dark){#uzum-inv-modal{--bg:#0f0b1d;--side:#171130;--surface:#1c1538;--surface-2:#241b47;--surface-3:#2f2459;--line:#33295a;--line-2:#463a74;--text:#f3efff;--muted:#a79cd0;--primary:#a78bfa;--primary-2:#c084fc;--primary-ink:#1b1038;--ok:#34d399;--bad:#fb7185;--warn:#fbbf24;--acc:#38bdf8;--ret:#fb923c;--info:#818cf8;--par:#e879f9;--mut:#94a3b8;--shadow:0 30px 80px rgba(0,0,0,.6)}}
 #uzum-inv-modal *{box-sizing:border-box}
-#uzum-inv-modal button,#uzum-inv-modal input{font-family:inherit}
-
-#uzum-inv-modal .rv-shell{width:min(1080px,100%);height:min(92vh,940px);max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);display:flex;flex-direction:column;overflow:hidden;background:var(--bg);border:1px solid var(--border);border-radius:20px;box-shadow:var(--shadow)}
-
-#uzum-inv-modal .rv-top{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
-#uzum-inv-modal .rv-logo{width:40px;height:40px;flex-shrink:0;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,var(--primary),var(--primary-strong));color:var(--primary-ink);font-weight:900;font-size:18px;box-shadow:0 8px 20px color-mix(in srgb,var(--primary) 30%,transparent)}
-#uzum-inv-modal .rv-brand{flex:1;min-width:0}
-#uzum-inv-modal .rv-title{font-size:16px;font-weight:800;letter-spacing:-.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#uzum-inv-modal .rv-sub{font-size:12px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#uzum-inv-modal .rv-ver{flex-shrink:0;font-size:11px;font-weight:700;color:var(--primary);background:color-mix(in srgb,var(--primary) 12%,transparent);padding:4px 10px;border-radius:999px;white-space:nowrap}
-#uzum-inv-modal .rv-x{flex-shrink:0;width:34px;height:34px;display:grid;place-items:center;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);color:var(--muted);cursor:pointer;font-size:13px;transition:all .15s ease}
-#uzum-inv-modal .rv-x:hover{color:var(--text);border-color:var(--border-strong)}
-
-#uzum-inv-modal .rv-nav{padding:12px 20px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
-#uzum-inv-modal .rv-seg{display:inline-flex;max-width:100%;gap:4px;padding:4px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px}
-#uzum-inv-modal .rv-navbtn{padding:8px 16px;border:0;background:transparent;color:var(--muted);font-weight:700;font-size:13px;border-radius:9px;cursor:pointer;transition:all .15s ease;white-space:nowrap}
-#uzum-inv-modal .rv-navbtn:hover{color:var(--text)}
-#uzum-inv-modal .rv-navbtn.active{background:var(--surface-3);color:var(--primary);box-shadow:0 1px 3px rgba(0,0,0,.2)}
-
-#uzum-inv-modal .rv-body{flex:1;min-height:0;overflow-y:auto;padding:20px;-webkit-overflow-scrolling:touch}
-#uzum-inv-modal .rv-panel{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px 20px;min-width:0}
-#uzum-inv-modal .rv-label{font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.6px;text-transform:uppercase}
-#uzum-inv-modal .rv-muted{color:var(--muted);font-size:12px}
-#uzum-inv-modal .rv-accent{color:var(--primary)}
-
-#uzum-inv-modal .rv-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:0 16px;border:1px solid var(--border-strong);background:var(--surface-2);color:var(--text);font-weight:600;font-size:13px;border-radius:11px;cursor:pointer;transition:all .15s ease;white-space:nowrap}
-#uzum-inv-modal .rv-btn:hover{border-color:var(--primary);color:var(--primary)}
-#uzum-inv-modal .rv-btn:active{transform:translateY(1px)}
-#uzum-inv-modal .rv-btn:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
-#uzum-inv-modal .rv-btn.teal{background:linear-gradient(135deg,var(--primary),var(--primary-strong));color:var(--primary-ink);border-color:transparent;box-shadow:0 8px 20px color-mix(in srgb,var(--primary) 28%,transparent)}
-#uzum-inv-modal .rv-btn.teal:hover{color:var(--primary-ink);filter:brightness(1.06)}
-#uzum-inv-modal .rv-btn.green{background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border-color:transparent}
-#uzum-inv-modal .rv-btn.green:hover{color:#fff;filter:brightness(1.06)}
-#uzum-inv-modal .rv-btn.danger{background:color-mix(in srgb,var(--bad) 12%,transparent);color:var(--bad);border-color:transparent}
-#uzum-inv-modal .rv-btn.danger:hover{background:color-mix(in srgb,var(--bad) 20%,transparent);color:var(--bad)}
-#uzum-inv-modal .rv-btn.big{width:100%;min-height:50px;font-size:15px;border-radius:13px}
-#uzum-inv-modal .rv-btn:disabled{opacity:.5;cursor:default;transform:none}
-
-#uzum-inv-modal .rv-in{width:100%;min-height:44px;padding:10px 14px;border:1px solid var(--border-strong);border-radius:12px;font-size:15px;font-weight:700;text-align:center;outline:none;background:var(--surface-2);color:var(--text);transition:border-color .15s ease,box-shadow .15s ease}
-#uzum-inv-modal .rv-in:focus{border-color:var(--primary);box-shadow:0 0 0 4px color-mix(in srgb,var(--primary) 18%,transparent)}
-
-#uzum-inv-modal .rv-setup{max-width:560px;margin:20px auto}
-#uzum-inv-modal .rv-setup .rv-panel{padding:30px 28px;text-align:center}
-#uzum-inv-modal .rv-hero{width:64px;height:64px;margin:0 auto 14px;border-radius:20px;display:grid;place-items:center;font-size:30px;background:color-mix(in srgb,var(--primary) 16%,transparent);border:1px solid color-mix(in srgb,var(--primary) 30%,transparent)}
-#uzum-inv-modal .rv-h2{margin:0;font-size:17px;font-weight:800;letter-spacing:-.2px}
-#uzum-inv-modal .rv-fields{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:20px 0 14px;text-align:left}
-#uzum-inv-modal .rv-field{display:flex;flex-direction:column;gap:8px;min-width:0}
-#uzum-inv-modal .rv-orders{display:inline-block;font-weight:700;font-size:12.5px;color:var(--primary);background:color-mix(in srgb,var(--primary) 12%,transparent);padding:7px 14px;border-radius:999px}
-#uzum-inv-modal .rv-setup-go{margin-top:22px}
-#uzum-inv-modal .rv-prog{margin-top:14px;color:var(--primary);font-weight:600;min-height:20px;font-size:13px}
-
-#uzum-inv-modal .rv-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:14px}
-#uzum-inv-modal .rv-kpi{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 16px;min-width:0}
-#uzum-inv-modal .rv-kpi b{display:block;margin-top:6px;font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#uzum-inv-modal .rv-progress{margin-bottom:16px}
-#uzum-inv-modal .rv-meter{height:10px;background:var(--surface-3);border-radius:999px;overflow:hidden}
-#uzum-inv-modal .rv-meter>div{height:100%;width:0;background:linear-gradient(90deg,var(--primary),var(--ok));border-radius:999px;transition:width .35s ease}
-#uzum-inv-modal .rv-meterlbl{font-size:12px;color:var(--muted);margin-top:8px;font-weight:600;font-variant-numeric:tabular-nums}
-
-#uzum-inv-modal .rv-work{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:12px;margin-bottom:14px}
-#uzum-inv-modal .rv-cellbox{display:flex;flex-direction:column;justify-content:center;min-height:156px;background:linear-gradient(160deg,var(--surface) 0%,var(--surface-2) 100%)}
-#uzum-inv-modal .rv-cell{margin-top:10px;font-size:clamp(32px,4.6vw,50px);font-weight:900;line-height:1.05;letter-spacing:-.5px;color:var(--primary);word-break:break-all}
-#uzum-inv-modal .rv-cell.empty{font-size:15px;font-weight:700;letter-spacing:0;color:var(--muted)}
-#uzum-inv-modal .rv-last{margin:8px 0 12px;font-size:15px;font-weight:700;font-family:ui-monospace,Consolas,monospace;word-break:break-all}
-#uzum-inv-modal .rv-hint{padding:10px 14px;border-radius:12px;font-weight:600;font-size:13px;color:var(--c,var(--muted));background:var(--cs,transparent);border:1px solid color-mix(in srgb,var(--c,var(--muted)) 28%,transparent);border-left:4px solid var(--c,var(--muted))}
-
-#uzum-inv-modal .rv-scanrow{display:flex;gap:10px;margin-bottom:16px}
-#uzum-inv-modal .rv-scanrow input{flex:1;min-width:0;padding:14px 18px;border:1px solid var(--primary);border-radius:14px;font-size:15px;outline:none;background:var(--surface);color:var(--text);transition:box-shadow .2s ease}
-#uzum-inv-modal .rv-scanrow input:focus{box-shadow:0 0 0 4px color-mix(in srgb,var(--primary) 20%,transparent)}
-#uzum-inv-modal .rv-scanrow .rv-btn{min-height:50px}
-#uzum-inv-modal .rv-listhead{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px}
-#uzum-inv-modal .rv-listhead span{font-weight:800;font-size:13.5px}
-#uzum-inv-modal .rv-list{max-height:280px;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:14px}
-#uzum-inv-modal .rv-empty{padding:24px;text-align:center;color:var(--muted)}
-
-#uzum-inv-modal .rv-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
-#uzum-inv-modal .rv-tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
-#uzum-inv-modal .rv-scroll .rv-tbl{min-width:480px}
-#uzum-inv-modal .rv-list .rv-tbl th{position:sticky;top:0;z-index:1}
-#uzum-inv-modal .rv-tbl th{padding:10px 14px;text-align:left;background:var(--surface-2);color:var(--muted);font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;white-space:nowrap}
-#uzum-inv-modal .rv-tbl td{padding:11px 14px;border-top:1px solid var(--border);vertical-align:middle}
-#uzum-inv-modal .rv-tbl tbody tr:hover td{background:var(--surface-2)}
-#uzum-inv-modal .rv-tbl .rv-r{text-align:right;font-weight:800;white-space:nowrap}
-#uzum-inv-modal .rv-tbl .mono{font-family:ui-monospace,Consolas,monospace;font-weight:700}
-#uzum-inv-modal .rv-tbl tr.s-acc td,#uzum-inv-modal .rv-tbl tr.s-ret td,#uzum-inv-modal .rv-tbl tr.s-bad td{background:var(--cs)}
-#uzum-inv-modal .rv-tbl td[class*="s-"]{color:var(--c)}
-
-#uzum-inv-modal .rv-rhead{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:16px;flex-wrap:wrap}
-#uzum-inv-modal .rv-rhead h3{margin:0;font-size:18px;font-weight:800;letter-spacing:-.2px}
-#uzum-inv-modal .rv-rmeta{font-size:13px;color:var(--muted);margin-top:6px;line-height:1.6}
-#uzum-inv-modal .rv-rmeta b{color:var(--text)}
-#uzum-inv-modal .rv-acts{display:flex;gap:8px;flex-wrap:wrap}
-#uzum-inv-modal .rv-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
-#uzum-inv-modal .rv-tile{min-width:0;border-radius:14px;padding:14px 16px;background:var(--cs);border:1px solid color-mix(in srgb,var(--c) 30%,transparent);color:var(--c)}
-#uzum-inv-modal .rv-tile .n{font-size:26px;font-weight:900;line-height:1.1;font-variant-numeric:tabular-nums}
-#uzum-inv-modal .rv-tile .t{font-size:12px;font-weight:700;margin-top:4px;color:var(--muted)}
-#uzum-inv-modal .rv-tile .u{font-size:12px;font-weight:800;margin-top:6px;color:var(--c)}
-
-#uzum-inv-modal .rv-sec{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;margin-bottom:12px}
-#uzum-inv-modal .rv-sec-h{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;padding:12px 16px;font-weight:800;font-size:13.5px;color:var(--c,var(--text));background:var(--cs,transparent);border-bottom:1px solid var(--border)}
-#uzum-inv-modal .rv-pill{font-size:12px;font-weight:700;color:var(--muted);background:var(--surface);padding:4px 10px;border-radius:999px;border:1px solid var(--border);white-space:nowrap}
-#uzum-inv-modal .rv-none{padding:16px;color:var(--muted);font-size:13px}
-#uzum-inv-modal .rv-none.ok{color:var(--ok);font-weight:700}
-
-#uzum-inv-modal .rv-hhead{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px}
-#uzum-inv-modal .rv-hhead h3{margin:0;font-size:17px;font-weight:800}
-#uzum-inv-modal .rv-hhead input{padding:10px 14px;border:1px solid var(--border-strong);border-radius:12px;width:min(320px,100%);font-size:13px;outline:none;background:var(--surface);color:var(--text);transition:border-color .15s ease,box-shadow .15s ease}
-#uzum-inv-modal .rv-hhead input:focus{border-color:var(--primary);box-shadow:0 0 0 4px color-mix(in srgb,var(--primary) 18%,transparent)}
-#uzum-inv-modal .rv-hist{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px 18px;margin-bottom:10px;transition:border-color .15s ease}
-#uzum-inv-modal .rv-hist:hover{border-color:var(--border-strong)}
-#uzum-inv-modal .rv-hist .h1{font-weight:800;font-size:14.5px;min-width:0}
-#uzum-inv-modal .rv-hist .h1 span{color:var(--muted);font-weight:500;font-size:12.5px}
-#uzum-inv-modal .rv-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
-#uzum-inv-modal .rv-chip{font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:8px;color:var(--c,var(--muted));background:var(--cs,color-mix(in srgb,var(--muted) 12%,transparent))}
-#uzum-inv-modal .rv-tag{display:inline-block;font-size:10px;font-weight:800;padding:3px 8px;border-radius:6px;margin-left:6px;letter-spacing:.3px;vertical-align:middle;color:var(--c,var(--muted));background:var(--cs,transparent)}
-
+#uzum-inv-modal button,#uzum-inv-modal input{font:inherit}
 #uzum-inv-modal .s-ok{--c:var(--ok);--cs:color-mix(in srgb,var(--ok) 14%,transparent)}
 #uzum-inv-modal .s-bad{--c:var(--bad);--cs:color-mix(in srgb,var(--bad) 14%,transparent)}
 #uzum-inv-modal .s-warn{--c:var(--warn);--cs:color-mix(in srgb,var(--warn) 14%,transparent)}
 #uzum-inv-modal .s-acc{--c:var(--acc);--cs:color-mix(in srgb,var(--acc) 14%,transparent)}
 #uzum-inv-modal .s-ret{--c:var(--ret);--cs:color-mix(in srgb,var(--ret) 14%,transparent)}
 #uzum-inv-modal .s-info{--c:var(--info);--cs:color-mix(in srgb,var(--info) 14%,transparent)}
+#uzum-inv-modal .s-par{--c:var(--par);--cs:color-mix(in srgb,var(--par) 14%,transparent)}
 #uzum-inv-modal .s-mut{--c:var(--mut);--cs:color-mix(in srgb,var(--mut) 14%,transparent)}
 #uzum-inv-modal .s-search{--c:var(--primary);--cs:color-mix(in srgb,var(--primary) 14%,transparent)}
+#uzum-inv-modal .uz-c{color:var(--c)}
 
-@media (max-width:760px){
+#uzum-inv-modal .uz-app{width:min(1120px,100%);height:min(92vh,900px);display:grid;grid-template-columns:232px minmax(0,1fr);background:var(--bg);border:1px solid var(--line);border-radius:22px;overflow:hidden;box-shadow:var(--shadow)}
+#uzum-inv-modal .uz-side{display:flex;flex-direction:column;gap:18px;padding:20px 16px;background:var(--side);border-right:1px solid var(--line);min-height:0;overflow:auto}
+#uzum-inv-modal .uz-brand{display:flex;align-items:center;gap:12px;padding:4px 6px}
+#uzum-inv-modal .uz-logo{width:42px;height:42px;flex-shrink:0;border-radius:14px;display:grid;place-items:center;font-weight:900;font-size:19px;color:#fff;background:linear-gradient(135deg,var(--primary-2),var(--primary));box-shadow:0 10px 24px color-mix(in srgb,var(--primary) 35%,transparent)}
+#uzum-inv-modal .uz-brand-t{font-weight:800;font-size:15px;letter-spacing:-.2px}
+#uzum-inv-modal .uz-brand-s{font-size:11.5px;color:var(--muted);margin-top:2px}
+#uzum-inv-modal .uz-nav{display:flex;flex-direction:column;gap:6px}
+#uzum-inv-modal .uz-navbtn{display:flex;align-items:center;gap:10px;width:100%;padding:11px 12px;border:0;border-radius:12px;background:transparent;color:var(--muted);font-weight:700;font-size:13.5px;text-align:left;cursor:pointer;transition:background .15s,color .15s}
+#uzum-inv-modal .uz-navbtn:hover{background:var(--surface-2);color:var(--text)}
+#uzum-inv-modal .uz-navbtn.active{background:var(--primary);color:var(--primary-ink);box-shadow:0 8px 20px color-mix(in srgb,var(--primary) 30%,transparent)}
+#uzum-inv-modal .uz-navic{width:18px;text-align:center;font-size:15px}
+#uzum-inv-modal .uz-pvzcard{margin-top:auto;padding:12px 14px;border-radius:14px;background:var(--surface-2);border:1px solid var(--line)}
+#uzum-inv-modal .uz-pvzcard .uz-lbl{display:block;margin-bottom:4px}
+#uzum-inv-modal .uz-pvzcard b{display:block;font-size:14px;font-weight:800}
+
+#uzum-inv-modal .uz-main{display:flex;flex-direction:column;min-width:0;min-height:0}
+#uzum-inv-modal .uz-head{display:flex;align-items:flex-start;flex-wrap:wrap;gap:12px 14px;padding:22px 26px 12px;flex-shrink:0}
+#uzum-inv-modal .uz-head-l{flex:1;min-width:0}
+#uzum-inv-modal .uz-h1{margin:0;font-size:21px;font-weight:800;letter-spacing:-.4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#uzum-inv-modal .uz-sub{margin:4px 0 0;font-size:13px;color:var(--muted)}
+#uzum-inv-modal .uz-head-a{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+#uzum-inv-modal .uz-x{width:36px;height:36px;flex-shrink:0;display:grid;place-items:center;border-radius:11px;border:1px solid var(--line);background:var(--surface);color:var(--muted);cursor:pointer;font-size:13px;transition:all .15s ease}
+#uzum-inv-modal .uz-x:hover{color:var(--text);border-color:var(--line-2)}
+#uzum-inv-modal .uz-steps{display:flex;gap:8px;flex-wrap:wrap;padding:0 26px 14px;flex-shrink:0}
+#uzum-inv-modal .uz-step{display:flex;align-items:center;gap:8px;padding:5px 12px 5px 5px;border-radius:999px;background:var(--surface);border:1px solid var(--line);font-size:12.5px;font-weight:700;color:var(--muted)}
+#uzum-inv-modal .uz-dot{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:11.5px;background:var(--surface-3);color:var(--muted)}
+#uzum-inv-modal .uz-step.done{color:var(--text)}
+#uzum-inv-modal .uz-step.done .uz-dot{background:var(--ok);color:#fff}
+#uzum-inv-modal .uz-step.on{color:var(--primary);border-color:color-mix(in srgb,var(--primary) 45%,transparent)}
+#uzum-inv-modal .uz-step.on .uz-dot{background:var(--primary);color:var(--primary-ink)}
+#uzum-inv-modal .uz-body{flex:1;min-height:0;overflow-y:auto;padding:4px 26px 26px;-webkit-overflow-scrolling:touch}
+
+#uzum-inv-modal .uz-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:0 16px;border-radius:12px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap;transition:transform .12s,filter .15s,border-color .15s,color .15s}
+#uzum-inv-modal .uz-btn:hover{border-color:var(--primary);color:var(--primary)}
+#uzum-inv-modal .uz-btn:active{transform:translateY(1px)}
+#uzum-inv-modal .uz-btn:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+#uzum-inv-modal .uz-btn:disabled{opacity:.55;cursor:default;transform:none}
+#uzum-inv-modal .uz-btn.pri{background:linear-gradient(135deg,var(--primary-2),var(--primary));color:#fff;border-color:transparent;box-shadow:0 10px 22px color-mix(in srgb,var(--primary) 30%,transparent)}
+#uzum-inv-modal .uz-btn.pri:hover{color:#fff;filter:brightness(1.07)}
+#uzum-inv-modal .uz-btn.ok{background:linear-gradient(135deg,#34d399,var(--ok));color:#fff;border-color:transparent}
+#uzum-inv-modal .uz-btn.ok:hover{color:#fff;filter:brightness(1.05)}
+#uzum-inv-modal .uz-btn.ghost{background:transparent}
+#uzum-inv-modal .uz-btn.danger{background:color-mix(in srgb,var(--bad) 10%,transparent);color:var(--bad);border-color:transparent}
+#uzum-inv-modal .uz-btn.danger:hover{color:var(--bad);filter:brightness(1.05)}
+#uzum-inv-modal .uz-btn.big{width:100%;min-height:52px;font-size:15px;border-radius:14px}
+
+#uzum-inv-modal .uz-card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:18px 20px;min-width:0}
+#uzum-inv-modal .uz-lbl{font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--muted)}
+#uzum-inv-modal .uz-muted{color:var(--muted);font-size:12.5px}
+#uzum-inv-modal .uz-empty{padding:26px;text-align:center;color:var(--muted);background:var(--surface);border:1px dashed var(--line-2);border-radius:16px}
+
+#uzum-inv-modal .uz-setup{max-width:580px;margin:6px auto 0;text-align:center}
+#uzum-inv-modal .uz-hero{width:68px;height:68px;margin:6px auto 16px;border-radius:22px;display:grid;place-items:center;font-size:30px;background:linear-gradient(135deg,color-mix(in srgb,var(--primary-2) 25%,transparent),color-mix(in srgb,var(--primary) 18%,transparent))}
+#uzum-inv-modal .uz-form{display:grid;grid-template-columns:1fr 1fr;gap:14px;text-align:left}
+#uzum-inv-modal .uz-field{display:flex;flex-direction:column;gap:8px;min-width:0}
+#uzum-inv-modal .uz-in{width:100%;min-height:46px;padding:0 14px;border-radius:12px;border:1px solid var(--line-2);background:var(--surface-2);color:var(--text);font-size:15px;font-weight:700;outline:none;transition:border-color .15s,box-shadow .15s}
+#uzum-inv-modal .uz-in:focus{border-color:var(--primary);box-shadow:0 0 0 4px color-mix(in srgb,var(--primary) 18%,transparent)}
+#uzum-inv-modal .uz-issue{margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-radius:14px;background:var(--surface-2);border:1px dashed var(--line-2)}
+#uzum-inv-modal .uz-issue b{font-size:20px;font-weight:900;color:var(--primary)}
+#uzum-inv-modal .uz-note{margin-top:8px;font-size:12px;color:var(--muted)}
+#uzum-inv-modal .uz-dpst{margin-top:14px;padding:10px 14px;border-radius:12px;font-weight:700;font-size:13px;text-align:left;color:var(--c,var(--muted));background:var(--cs,var(--surface-2));border:1px solid color-mix(in srgb,var(--c,var(--muted)) 30%,transparent);border-left:4px solid var(--c,var(--muted))}
+#uzum-inv-modal .uz-prog{min-height:20px;margin-top:12px;text-align:center;font-size:13px;font-weight:700;color:var(--primary)}
+
+#uzum-inv-modal .uz-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) 112px;gap:12px;margin-bottom:12px}
+#uzum-inv-modal .uz-stat{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:14px 16px;min-width:0}
+#uzum-inv-modal .uz-stat b{display:block;margin-top:6px;font-size:24px;font-weight:900;letter-spacing:-.5px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#uzum-inv-modal .uz-stat.hl b{color:var(--primary)}
+#uzum-inv-modal .uz-stat-ring{display:flex;align-items:center;justify-content:center;padding:10px}
+#uzum-inv-modal .uz-ring{position:relative;width:76px;height:76px}
+#uzum-inv-modal .uz-ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+#uzum-inv-modal .uz-ring circle{fill:none;stroke-width:7}
+#uzum-inv-modal .uz-ring .bg{stroke:var(--surface-3)}
+#uzum-inv-modal .uz-ring .fg{stroke:var(--primary);stroke-linecap:round;transition:stroke-dashoffset .4s ease}
+#uzum-inv-modal .uz-ring-t{position:absolute;inset:0;display:grid;place-items:center;font-weight:900;font-size:15px;font-variant-numeric:tabular-nums}
+#uzum-inv-modal .uz-meter{height:8px;border-radius:999px;background:var(--surface-3);overflow:hidden}
+#uzum-inv-modal .uz-meter>div{height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,var(--primary-2),var(--primary));transition:width .35s ease}
+#uzum-inv-modal .uz-barrow{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px 14px;margin:8px 2px 16px}
+#uzum-inv-modal .uz-barlbl{font-size:12px;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums}
+#uzum-inv-modal .uz-timer{display:inline-flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;font-weight:700;color:var(--muted)}
+#uzum-inv-modal .uz-timer b{font-size:18px;font-weight:900;color:var(--primary);font-variant-numeric:tabular-nums}
+
+#uzum-inv-modal .uz-work{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:12px;margin-bottom:14px}
+#uzum-inv-modal .uz-cellcard{display:flex;flex-direction:column;justify-content:center;min-height:150px;border-radius:18px;padding:18px 20px;color:#fff;background:linear-gradient(150deg,#8b5cf6 0%,#5b21b6 100%);box-shadow:0 14px 30px rgba(91,33,182,.3);min-width:0}
+#uzum-inv-modal .uz-cellcard .uz-lbl{color:rgba(255,255,255,.78)}
+#uzum-inv-modal .uz-cell{margin-top:8px;font-size:clamp(28px,4vw,42px);font-weight:900;letter-spacing:-.5px;line-height:1.05;word-break:break-all}
+#uzum-inv-modal .uz-cell.empty{font-size:15px;font-weight:700;letter-spacing:0;opacity:.85}
+#uzum-inv-modal .uz-lastcard{display:flex;flex-direction:column;gap:10px;justify-content:center}
+#uzum-inv-modal .uz-code{font:700 15px/1.3 ui-monospace,Consolas,monospace;word-break:break-all}
+#uzum-inv-modal .uz-hint{padding:11px 14px;border-radius:12px;font-weight:700;font-size:13px;color:var(--c,var(--muted));background:var(--cs,var(--surface-2));border:1px solid color-mix(in srgb,var(--c,var(--muted)) 30%,transparent);border-left:4px solid var(--c,var(--muted))}
+
+#uzum-inv-modal .uz-scanrow{display:flex;gap:10px;margin-bottom:16px}
+#uzum-inv-modal .uz-scan{flex:1;min-width:0;min-height:52px;padding:0 18px;border-radius:14px;border:2px solid var(--primary);background:var(--surface);color:var(--text);font-size:15px;font-weight:600;outline:none;box-shadow:0 0 0 4px color-mix(in srgb,var(--primary) 12%,transparent)}
+#uzum-inv-modal .uz-scan:focus{box-shadow:0 0 0 5px color-mix(in srgb,var(--primary) 25%,transparent)}
+#uzum-inv-modal .uz-listh{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 10px;flex-wrap:wrap}
+#uzum-inv-modal .uz-listh span{font-weight:800;font-size:14px}
+#uzum-inv-modal .uz-list{max-height:300px;overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:16px}
+#uzum-inv-modal .uz-list .uz-empty{border:0;border-radius:0}
+
+#uzum-inv-modal .uz-tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
+#uzum-inv-modal .uz-tbl{width:100%;min-width:560px;border-collapse:separate;border-spacing:0;font-size:13px}
+#uzum-inv-modal .uz-tbl th{position:sticky;top:0;z-index:1;padding:11px 14px;text-align:left;background:var(--surface-2);color:var(--muted);font-size:10.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;white-space:nowrap}
+#uzum-inv-modal .uz-tbl td{padding:12px 14px;border-top:1px solid var(--line);vertical-align:middle}
+#uzum-inv-modal .uz-tbl tbody tr:hover td{background:var(--surface-2)}
+#uzum-inv-modal .uz-tbl .r{text-align:right;font-weight:800;white-space:nowrap}
+#uzum-inv-modal .uz-mono{font-family:ui-monospace,Consolas,monospace;font-weight:700}
+
+#uzum-inv-modal .uz-tag{display:inline-flex;align-items:center;padding:3px 9px;margin-left:6px;border-radius:999px;font-size:10.5px;font-weight:800;letter-spacing:.3px;white-space:nowrap;vertical-align:middle;color:var(--c,var(--muted));background:var(--cs,var(--surface-2))}
+#uzum-inv-modal .uz-st{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:800;white-space:nowrap;color:var(--c,var(--muted))}
+#uzum-inv-modal .uz-st::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+
+#uzum-inv-modal .uz-tiles{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:16px}
+#uzum-inv-modal .uz-tile{min-width:0;padding:14px;border-radius:16px;color:var(--c,var(--muted));background:var(--cs,var(--surface));border:1px solid color-mix(in srgb,var(--c,var(--muted)) 28%,transparent)}
+#uzum-inv-modal .uz-tile .n{font-size:26px;font-weight:900;line-height:1;font-variant-numeric:tabular-nums}
+#uzum-inv-modal .uz-tile .t{margin-top:7px;font-size:12px;font-weight:700;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#uzum-inv-modal .uz-tile .u{margin-top:4px;font-size:12px;font-weight:800;color:var(--c,var(--muted));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#uzum-inv-modal .uz-meta{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+#uzum-inv-modal .uz-chip{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:999px;background:var(--surface);border:1px solid var(--line);font-size:12.5px;font-weight:700;color:var(--muted)}
+#uzum-inv-modal .uz-chip b{color:var(--text);font-weight:900;font-variant-numeric:tabular-nums}
+
+#uzum-inv-modal .uz-sec{background:var(--surface);border:1px solid var(--line);border-radius:18px;overflow:hidden;margin-bottom:14px}
+#uzum-inv-modal .uz-sec-h{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:13px 18px;border-bottom:1px solid var(--line);background:var(--cs,transparent)}
+#uzum-inv-modal .uz-sec-t{display:flex;align-items:center;gap:10px;font-weight:800;font-size:14px;color:var(--c,var(--text))}
+#uzum-inv-modal .uz-sec-t::before{content:"";width:10px;height:10px;border-radius:4px;background:var(--c,var(--muted))}
+#uzum-inv-modal .uz-pill{font-size:12px;font-weight:700;color:var(--muted);background:var(--surface);border:1px solid var(--line);padding:4px 11px;border-radius:999px;white-space:nowrap}
+#uzum-inv-modal .uz-none{padding:18px;color:var(--muted);font-size:13px}
+#uzum-inv-modal .uz-none.ok{color:var(--ok);font-weight:700}
+
+#uzum-inv-modal .uz-hsearch{width:min(340px,100%);min-height:44px;padding:0 14px;margin-bottom:14px;border-radius:12px;border:1px solid var(--line-2);background:var(--surface);color:var(--text);outline:none}
+#uzum-inv-modal .uz-hsearch:focus{border-color:var(--primary);box-shadow:0 0 0 4px color-mix(in srgb,var(--primary) 18%,transparent)}
+#uzum-inv-modal .uz-hcard{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;padding:16px 18px;margin-bottom:12px;background:var(--surface);border:1px solid var(--line);border-radius:18px;min-width:0}
+#uzum-inv-modal .uz-hcard:hover{border-color:var(--line-2)}
+#uzum-inv-modal .uz-hname{font-weight:800;font-size:15px;min-width:0}
+#uzum-inv-modal .uz-hname small{display:block;margin-top:3px;font-size:12px;color:var(--muted);font-weight:600}
+#uzum-inv-modal .uz-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+#uzum-inv-modal .uz-tc{font-size:11.5px;font-weight:800;padding:4px 10px;border-radius:8px;color:var(--c,var(--muted));background:var(--cs,var(--surface-2))}
+#uzum-inv-modal .uz-acts{display:flex;gap:8px;flex-wrap:wrap}
+
+@media (max-width:980px){
+  #uzum-inv-modal .uz-app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+  #uzum-inv-modal .uz-side{flex-direction:row;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 16px;border-right:0;border-bottom:1px solid var(--line);overflow:visible}
+  #uzum-inv-modal .uz-brand-s{display:none}
+  #uzum-inv-modal .uz-nav{flex-direction:row;flex:1;min-width:0}
+  #uzum-inv-modal .uz-navbtn{width:auto;padding:9px 12px}
+  #uzum-inv-modal .uz-pvzcard{display:none}
+  #uzum-inv-modal .uz-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+  #uzum-inv-modal .uz-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #uzum-inv-modal .uz-stat-ring{grid-column:span 2}
+}
+@media (max-width:640px){
   #uzum-inv-modal{padding:0}
-  #uzum-inv-modal .rv-shell{width:100%;height:100%;max-height:none;border-radius:0;border:0}
-  #uzum-inv-modal .rv-top{padding:12px 14px}
-  #uzum-inv-modal .rv-ver{display:none}
-  #uzum-inv-modal .rv-nav{padding:10px 14px}
-  #uzum-inv-modal .rv-body{padding:14px}
-  #uzum-inv-modal .rv-setup .rv-panel{padding:22px 18px}
-  #uzum-inv-modal .rv-fields{grid-template-columns:1fr}
-  #uzum-inv-modal .rv-kpis{gap:8px}
-  #uzum-inv-modal .rv-kpi{padding:10px 12px}
-  #uzum-inv-modal .rv-kpi b{font-size:17px}
-  #uzum-inv-modal .rv-work{grid-template-columns:1fr}
-  #uzum-inv-modal .rv-scanrow{gap:8px}
-  #uzum-inv-modal .rv-scanrow .rv-btn{padding:0 12px}
-  #uzum-inv-modal .rv-tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-  #uzum-inv-modal .rv-tile{padding:12px}
-  #uzum-inv-modal .rv-tile .n{font-size:22px}
-  #uzum-inv-modal .rv-hhead input{width:100%}
-  #uzum-inv-modal .rv-hist{flex-direction:column;align-items:stretch}
-  #uzum-inv-modal .rv-hist .rv-acts,#uzum-inv-modal .rv-rhead .rv-acts{width:100%}
-  #uzum-inv-modal .rv-acts .rv-btn{flex:1 1 auto}
+  #uzum-inv-modal .uz-app{width:100%;height:100%;border-radius:0;border:0}
+  #uzum-inv-modal .uz-side{padding:10px 12px}
+  #uzum-inv-modal .uz-brand-t{font-size:14px}
+  #uzum-inv-modal .uz-navbtn{padding:8px 10px;font-size:12.5px}
+  #uzum-inv-modal .uz-head{padding:16px 16px 10px}
+  #uzum-inv-modal .uz-h1{font-size:18px;white-space:normal}
+  #uzum-inv-modal .uz-steps{padding:0 16px 10px}
+  #uzum-inv-modal .uz-step .lbl{display:none}
+  #uzum-inv-modal .uz-body{padding:4px 14px 20px}
+  #uzum-inv-modal .uz-form{grid-template-columns:1fr}
+  #uzum-inv-modal .uz-stats{gap:8px}
+  #uzum-inv-modal .uz-stat{padding:12px}
+  #uzum-inv-modal .uz-stat b{font-size:19px}
+  #uzum-inv-modal .uz-work{grid-template-columns:1fr}
+  #uzum-inv-modal .uz-scanrow{gap:8px}
+  #uzum-inv-modal .uz-scanrow .uz-btn{padding:0 12px}
+  #uzum-inv-modal .uz-tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  #uzum-inv-modal .uz-tile{padding:12px}
+  #uzum-inv-modal .uz-tile .n{font-size:22px}
+  #uzum-inv-modal .uz-tbl{min-width:0}
+  #uzum-inv-modal .uz-tbl thead{display:none}
+  #uzum-inv-modal .uz-tbl,#uzum-inv-modal .uz-tbl tbody,#uzum-inv-modal .uz-tbl tr,#uzum-inv-modal .uz-tbl td{display:block;width:100%}
+  #uzum-inv-modal .uz-tbl tr{padding:10px 14px;border-top:1px solid var(--line)}
+  #uzum-inv-modal .uz-tbl td{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:5px 0;border:0;text-align:right}
+  #uzum-inv-modal .uz-tbl td::before{content:attr(data-l);flex-shrink:0;font-size:11px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);text-align:left}
+  #uzum-inv-modal .uz-tbl td:empty{display:none}
+  #uzum-inv-modal .uz-tbl tbody tr:hover td{background:none}
+  #uzum-inv-modal .uz-head-a{width:100%;justify-content:flex-start}
+  #uzum-inv-modal .uz-hcard{flex-direction:column;align-items:stretch}
+  #uzum-inv-modal .uz-acts .uz-btn{flex:1}
+  #uzum-inv-modal .uz-hsearch{width:100%}
 }
 @media (max-width:420px){
-  #uzum-inv-modal .rv-kpi b{font-size:15px}
-  #uzum-inv-modal .rv-tiles{grid-template-columns:1fr 1fr}
+  #uzum-inv-modal .uz-stats{grid-template-columns:1fr 1fr}
+  #uzum-inv-modal .uz-stat-ring{grid-column:span 2}
+  #uzum-inv-modal .uz-tiles{grid-template-columns:1fr 1fr}
 }
 `;
 
@@ -1925,42 +2294,59 @@
     document.head.appendChild(st);
   }
 
-  function showScreen(name) {
-    state.screen = name;
-    if (name !== 'history') state.workScreen = name;
-    ['start', 'scan', 'report', 'history'].forEach(n => {
-      const el = $(`u-${n}-screen`);
-      if (el) el.style.display = n === name ? 'block' : 'none';
-    });
-    $('u-tab-new').classList.toggle('active', name !== 'history');
-    $('u-tab-history').classList.toggle('active', name === 'history');
-    if (name === 'scan') {
-      const inp = $('u-barcode-input');
-      if (inp) inp.focus();
-    }
-    if (name === 'history') renderHistoryScreen();
+  // ---------------------------------------------------------------- UI helpers
+  function tbl(heads, rows) {
+    const head = heads.map(h => `<th>${escHtml(h)}</th>`).join('');
+    const body = rows.map(cells => `<tr>${cells.map((c, i) => `<td data-l="${escHtml(heads[i] || '')}">${c}</td>`).join('')}</tr>`).join('');
+    return `<div class="uz-tw"><table class="uz-tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+  }
+
+  function setDpStatus(kind, text) {
+    const el = $('u-dp-status');
+    if (!el) return;
+    const cls = { idle: 's-mut', busy: 's-search', ok: 's-ok', bad: 's-bad' }[kind] || 's-mut';
+    el.className = 'uz-dpst ' + cls;
+    el.textContent = text;
   }
 
   function isModalOpen() {
     const m = $('uzum-inv-modal');
-    return !!(m && m.style.display !== 'none');
+    return !!m && m.style.display === 'flex';
   }
 
   function isScanningActive() {
     return isModalOpen() && state.screen === 'scan';
   }
 
+  function isTypingElsewhere() {
+    const a = document.activeElement;
+    if (!a || a === $('u-barcode-input')) return false;
+    return a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable;
+  }
+
+  function focusScanInput() {
+    const inp = $('u-barcode-input');
+    if (inp && isScanningActive()) inp.focus({ preventScroll: true });
+  }
+
+  function closeModal() {
+    const m = $('uzum-inv-modal');
+    if (m) m.style.display = 'none';
+  }
+
   function applyStaticTexts() {
     const set = (id, txt) => { const el = $(id); if (el) el.textContent = txt; };
     set('u-app-name', t('appName'));
-    set('u-subtitle', t('subtitle'));
-    set('u-close', '✕');
-    $('u-close').title = t('close');
-    set('u-tab-new', t('tabNew'));
-    set('u-tab-history', t('tabHistory'));
-    set('u-params-title', t('paramsTitle'));
+    set('u-tab-new-t', t('navNew'));
+    set('u-tab-history-t', t('navHist'));
+    set('u-side-lbl', t('pvz'));
+    set('u-step-1', t('stepParams'));
+    set('u-step-2', t('stepScan'));
+    set('u-step-3', t('stepReport'));
     set('u-lbl-pvz', t('pvz'));
     set('u-lbl-dpkey', t('dpKeyLabel'));
+    set('u-lbl-issue', t('issueLabel'));
+    set('u-ordersnote', t('ordersFromPage'));
     set('u-load-btn', t('loadBtn'));
     set('u-lbl-stat-orders', t('statOrders'));
     set('u-lbl-stat-plan', t('statPlan'));
@@ -1969,14 +2355,418 @@
     set('u-lbl-last', t('lastBarcode'));
     set('u-undo-btn', t('undo'));
     set('u-lbl-cell-items', t('cellItems'));
-    set('u-finish-btn', t('finish'));
-    set('u-hist-title', t('histTitle'));
-    $('u-barcode-input').placeholder = t('scanPlaceholder');
-    $('u-hist-search').placeholder = t('histSearch');
-    if (!state.activeCell) set('u-active-cell', t('cellPlaceholder'));
-    $('u-active-cell').classList.toggle('empty', !state.activeCell);
+    set('u-lbl-timer', t('timerLabel'));
+    const close = $('u-close');
+    if (close) { close.title = t('close'); close.setAttribute('aria-label', t('close')); }
+    const scanInp = $('u-barcode-input');
+    if (scanInp) scanInp.placeholder = t('scanPlaceholder');
+    const hs = $('u-hist-search');
+    if (hs) hs.placeholder = t('histSearch');
   }
 
+  function updateSteps(name) {
+    const order = ['start', 'scan', 'report'];
+    const cur = order.indexOf(name);
+    const modal = $('uzum-inv-modal');
+    if (!modal) return;
+    modal.querySelectorAll('.uz-step').forEach(el => {
+      const idx = order.indexOf(el.dataset.step);
+      el.classList.toggle('done', cur > idx);
+      el.classList.toggle('on', cur === idx);
+    });
+  }
+
+  function renderHeadActions(name) {
+    const box = $('u-head-actions');
+    if (!box) return;
+    let html = '';
+    if (name === 'scan') {
+      html = `<button type="button" class="uz-btn ghost" id="u-restart-btn">${escHtml(t('restartBtn'))}</button>` +
+             `<button type="button" class="uz-btn pri" id="u-finish-btn">${escHtml(t('finish'))}</button>`;
+    } else if (name === 'report') {
+      html = `<button type="button" class="uz-btn ghost" id="u-back-btn">${escHtml(t('btnBack'))}</button>` +
+             `<button type="button" class="uz-btn ghost" id="u-excel-btn">${escHtml(t('btnExcel'))}</button>` +
+             `<button type="button" class="uz-btn ok" id="u-save-btn" ${state.savedInSession ? 'disabled' : ''}>${escHtml(state.savedInSession ? t('btnSaved') : t('btnSave'))}</button>`;
+    }
+    box.innerHTML = html;
+    const bind = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
+    bind('u-restart-btn', restartRevision);
+    bind('u-finish-btn', () => showScreen('report'));
+    bind('u-back-btn', () => showScreen('scan'));
+    bind('u-excel-btn', () => exportCleanXlsx());
+    bind('u-save-btn', saveAuditPermanently);
+  }
+
+  function updatePageHead(name) {
+    const pvz = state.activePvzName;
+    const map = {
+      start: [t('setupTitle'), t('setupHint')],
+      scan: [t('scanTitle', pvz), t('scanSub')],
+      report: [t('reportTitle', pvz), t('reportSub')],
+      history: [t('histTitle'), t('histSub')]
+    };
+    const pair = map[name] || map.start;
+    $('u-h1').textContent = pair[0];
+    $('u-sub').textContent = pair[1];
+    const steps = $('u-steps');
+    if (steps) steps.style.display = name === 'history' ? 'none' : '';
+    updateSteps(name);
+    renderHeadActions(name);
+  }
+
+  function updateSidePvz() {
+    const el = $('u-side-pvz');
+    if (!el) return;
+    el.textContent = state.activePvzName || '—';
+  }
+
+  function showScreen(name) {
+    if (name === 'report') renderReportScreen();
+    if (name === 'history') renderHistoryScreen();
+    state.screen = name;
+    if (name === 'scan' || name === 'report' || name === 'start') state.workScreen = name;
+    ['start', 'scan', 'report', 'history'].forEach(n => {
+      const el = $(`u-${n}-screen`);
+      if (el) el.style.display = n === name ? '' : 'none';
+    });
+    $('u-tab-new').classList.toggle('active', name !== 'history');
+    $('u-tab-history').classList.toggle('active', name === 'history');
+    updateSidePvz();
+    updatePageHead(name);
+    if (name === 'scan') focusScanInput();
+  }
+
+  // ---------------------------------------------------------------- scan screen
+  function renderCellItems() {
+    const box = $('u-cell-items');
+    if (!box) return;
+    const cell = state.activeCell;
+    const orderItems = (cell && state.factCellUnits[cell]) || {};
+    const accItems = (cell && state.acceptanceScans[cell]) || {};
+    const retItems = (cell && state.returnScans[cell]) || {};
+    const forItems = (cell && state.foreignScans[cell]) || {};
+    const rows = [];
+
+    Object.entries(orderItems).forEach(([oId, qty]) => {
+      const o = state.ordersMap[oId] || {};
+      rows.push([
+        `<b>${escHtml(t('orderLabel', o.pid || oId))}</b>${kindBadgeHtml(o)} <span class="uz-muted">${safeCustomerName(o.customer)}</span>`,
+        `<span class="r uz-c s-ok">${escHtml(t('pcs', qty))}</span>`
+      ]);
+    });
+    Object.entries(accItems).forEach(([code, d]) => {
+      rows.push([
+        `<span class="uz-mono">${escHtml(code)}</span><span class="uz-tag s-acc">${escHtml(t('badgeAcc'))}</span>`,
+        `<span class="r uz-c s-acc">+${escHtml(t('pcs', d.count))}</span>`
+      ]);
+    });
+    Object.entries(retItems).forEach(([code, d]) => {
+      rows.push([
+        `<span class="uz-mono">${escHtml(code)}</span><span class="uz-tag s-ret">${escHtml(t('badgeRet'))}</span>`,
+        `<span class="r uz-c s-ret">+${escHtml(t('pcs', d.count))}</span>`
+      ]);
+    });
+    Object.entries(forItems).forEach(([code, qty]) => {
+      rows.push([
+        `<span class="uz-mono">${escHtml(code)}</span><span class="uz-tag s-bad">${escHtml(t('badgeForeign'))}</span>`,
+        `<span class="r uz-c s-bad">+${escHtml(t('pcs', qty))}</span>`
+      ]);
+    });
+
+    if (!rows.length) {
+      box.innerHTML = `<div class="uz-empty">${escHtml(cell ? t('emptyCell') : t('hintNeedCell'))}</div>`;
+      return;
+    }
+    box.innerHTML = tbl([t('colOrderBarcode'), t('colQty')], rows);
+  }
+
+  function updateScannerUI(lastBarcode, statusType = 'NORMAL', hintText = '') {
+    const cellEl = $('u-active-cell');
+    if (!cellEl) return;
+
+    cellEl.textContent = state.activeCell || t('cellPlaceholder');
+    cellEl.classList.toggle('empty', !state.activeCell);
+    if (lastBarcode != null) $('u-last-barcode').textContent = lastBarcode;
+
+    $('u-sc-orders').textContent = state.totalOrdersCount;
+    $('u-sc-plan').textContent = t('pcs', state.totalPlanUnits);
+    $('u-sc-total').textContent = t('pcs', state.totalScannedUnits);
+
+    const found = Object.values(state.factGlobal).reduce((a, b) => a + b, 0);
+    const pct = state.totalPlanUnits ? Math.min(100, Math.round((found / state.totalPlanUnits) * 100)) : 0;
+    const fg = $('u-ring-fg');
+    fg.style.strokeDasharray = String(RING_C);
+    fg.style.strokeDashoffset = String(RING_C * (1 - pct / 100));
+    $('u-ring-t').textContent = pct + '%';
+    $('u-bar-fill').style.width = pct + '%';
+    $('u-bar-label').textContent = t('barLabel', found, state.totalPlanUnits);
+
+    const hintCls = { OK: 's-ok', INFO: 's-warn', ACCEPTANCE: 's-acc', RETURN: 's-ret', FOREIGN: 's-bad', SEARCH: 's-search', CELL: 's-search' };
+    const hint = $('u-scan-hint');
+    hint.className = 'uz-hint ' + (hintCls[statusType] || '');
+    hint.textContent = hintText || (state.activeCell ? t('hintScanItems') : t('hintNeedCell'));
+
+    renderCellItems();
+    updateTimerUI();
+  }
+
+  // ---------------------------------------------------------------- report screen
+  function renderReportScreen() {
+    refreshLocale();
+    const report = buildReport();
+    const partnerAll = report.partnerOrders;
+    const partnerIssues = partnerAll.filter(p => p.status !== 'OK');
+    const issuesTotal = report.pureShortages.length + report.mismatchedCells.length + report.inAcceptance.length +
+      report.canceledReturns.length + report.pureSurplus.length + partnerIssues.length;
+
+    const tiles = [
+      ['s-bad', t('tileShort'), report.pureShortages.length, `-${t('pcs', report.totalShortageUnits)}`],
+      ['s-warn', t('tileMis'), report.mismatchedCells.length, t('pcs', report.totalMismatchUnits)],
+      ['s-acc', t('tileAcc'), report.inAcceptance.length, t('pcs', report.totalAcceptanceUnits)],
+      ['s-ret', t('tileRet'), report.canceledReturns.length, t('pcs', report.totalReturnUnits)],
+      ['s-mut', t('tileSur'), report.pureSurplus.length, `+${t('pcs', report.totalSurplusUnits)}`],
+      ['s-par', t('tilePartner'), partnerIssues.length, t('ofTotal', partnerAll.length)]
+    ].map(([c, label, n, u]) =>
+      `<div class="uz-tile ${c}"><div class="n">${n}</div><div class="t">${escHtml(label)}</div><div class="u">${escHtml(u)}</div></div>`
+    ).join('');
+
+    const meta = `<div class="uz-meta">
+      <span class="uz-chip">${escHtml(t('metaOrders'))} <b>${state.totalOrdersCount}</b></span>
+      <span class="uz-chip">${escHtml(t('metaPlan'))} <b>${escHtml(t('pcs', state.totalPlanUnits))}</b></span>
+      <span class="uz-chip">${escHtml(t('metaScanned'))} <b>${escHtml(t('pcs', state.totalScannedUnits))}</b></span>
+      <span class="uz-chip">${escHtml(t('issuesPill', issuesTotal))}</span>
+      ${timeMetaHtml(state.totalScannedUnits)}
+    </div>`;
+
+    const sec = (cls, title, cnt, units, body) => `
+      <section class="uz-sec ${cls}">
+        <div class="uz-sec-h"><span class="uz-sec-t">${escHtml(title)}</span><span class="uz-pill">${escHtml(t('pos', cnt))} · ${escHtml(units)}</span></div>
+        ${body}
+      </section>`;
+    const none = (txt, ok) => `<div class="uz-none ${ok ? 'ok' : ''}">${escHtml(txt)}</div>`;
+
+    let html = meta + `<div class="uz-tiles">${tiles}</div>`;
+
+    html += sec('s-bad', t('secShort'), report.pureShortages.length, `-${t('pcs', report.totalShortageUnits)}`,
+      report.pureShortages.length === 0 ? none(t('noShort'), true) :
+      tbl([t('thPid'), t('thMissing'), t('thShelf'), t('thClient')], report.pureShortages.map(r => [
+        pidHtml(r),
+        `<span class="r uz-c s-bad">-${escHtml(t('pcs', r.missingCount))}</span>`,
+        escHtml(cellLabel(r.expectedCell)),
+        `${safeCustomerName(r.customer)} <span class="uz-muted">${escHtml(r.customer?.phone || '')}</span>`
+      ])));
+
+    html += sec('s-warn', t('secMis'), report.mismatchedCells.length, t('pcs', report.totalMismatchUnits),
+      report.mismatchedCells.length === 0 ? none(t('noMis'), true) :
+      tbl([t('thPid'), t('thQty'), t('thPlanCell'), t('thActualCell')], report.mismatchedCells.map(r => [
+        pidHtml(r),
+        `<span class="r">${escHtml(t('pcs', r.count))}</span>`,
+        `<span class="uz-c s-bad">${escHtml(cellLabel(r.expectedCell))}</span>`,
+        `<span class="uz-c s-ok">${escHtml(r.actualCell)}</span>`
+      ])));
+
+    html += sec('s-acc', t('secAcc'), report.inAcceptance.length, t('pcs', report.totalAcceptanceUnits),
+      report.inAcceptance.length === 0 ? none(t('noAcc'), false) :
+      tbl([t('thBarcodeLoc'), t('thQty'), t('thShelf'), t('thRec')], report.inAcceptance.map(r => [
+        `<span class="uz-mono">${escHtml(r.code)}</span>`,
+        `<span class="r uz-c s-acc">+${escHtml(t('pcs', r.count))}</span>`,
+        escHtml(`${t('cellWord')} ${r.foundCell}`),
+        `<b>${escHtml(t('recAcc'))}</b>`
+      ])));
+
+    html += sec('s-ret', t('secRet'), report.canceledReturns.length, t('pcs', report.totalReturnUnits),
+      report.canceledReturns.length === 0 ? none(t('noRet'), false) :
+      tbl([t('thBarcodeLoc'), t('thQty'), t('thShelf'), t('thRec')], report.canceledReturns.map(r => [
+        `<span class="uz-mono">${escHtml(r.code)}</span>`,
+        `<span class="r uz-c s-ret">+${escHtml(t('pcs', r.count))}</span>`,
+        escHtml(`${t('cellWord')} ${r.foundCell}`),
+        `<b>${escHtml(t('recRet'))}</b>`
+      ])));
+
+    html += sec('s-mut', t('secSur'), report.pureSurplus.length, `+${t('pcs', report.totalSurplusUnits)}`,
+      report.pureSurplus.length === 0 ? none(t('noSur'), false) :
+      tbl([t('thBarcode'), t('thExtra'), t('thFoundAt')], report.pureSurplus.map(r => [
+        `<span class="uz-mono">${escHtml(r.code)}</span>`,
+        `<span class="r uz-c s-bad">+${escHtml(t('pcs', r.qty))}</span>`,
+        escHtml(`${t('cellWord')} ${r.foundCell}`)
+      ])));
+
+    html += sec('s-par', t('secPartner'), partnerAll.length, t('pcs', report.totalPartnerUnits),
+      partnerAll.length === 0 ? none(t('noPartner'), false) :
+      tbl([t('thPid'), t('thStatus'), t('thPlanFact'), t('thLocation'), t('thClient'), t('thRec')], partnerAll.map(p => [
+        pidHtml(p),
+        `<span class="uz-st ${statusCls(p.status)}">${escHtml(statusText(p.status))}</span>`,
+        `<span class="uz-mono">${p.planQty} / ${p.factQty}</span>`,
+        escHtml(plainFound(p.found)),
+        `${safeCustomerName(p.customer)} <span class="uz-muted">${escHtml(p.customer?.phone || '')}</span>`,
+        escHtml(partnerAction(p.status))
+      ])));
+
+    $('u-report-screen').innerHTML = html;
+  }
+
+  // ---------------------------------------------------------------- history
+  function renderHistoryScreen(filter = '') {
+    refreshLocale();
+    const box = $('u-hist-container');
+    if (!box) return;
+    const list = getHistoryList();
+
+    if (!list.length) {
+      box.innerHTML = `<div class="uz-empty">${escHtml(t('histEmpty'))}</div>`;
+      return;
+    }
+
+    const q = String(filter || '').trim().toLowerCase();
+    const items = q ? list.filter(x => JSON.stringify(x).toLowerCase().includes(q)) : list;
+    if (!items.length) {
+      box.innerHTML = `<div class="uz-empty">${escHtml(t('histNotFound'))}</div>`;
+      return;
+    }
+
+    box.innerHTML = items.map(item => {
+      const s = item.stats || {};
+      const tm = item.timing;
+      const chips = [
+        `<span class="uz-tc">${escHtml(t('chipOrders', s.totalOrders ?? 0))}</span>`,
+        `<span class="uz-tc">${escHtml(t('chipPlan', s.totalPlanUnits ?? 0))}</span>`,
+        `<span class="uz-tc">${escHtml(t('chipFact', s.totalScanned ?? 0))}</span>`,
+        tm ? `<span class="uz-tc s-info">${escHtml(t('chipTime', fmtDur(tm.totalMs || 0), fmtDur(tm.activeMs || 0)))}</span>` : '',
+        `<span class="uz-tc s-bad">${escHtml(t('chipShort', s.shortageCount ?? 0))}</span>`,
+        `<span class="uz-tc s-warn">${escHtml(t('chipMis', s.mismatchCount ?? 0))}</span>`,
+        `<span class="uz-tc s-acc">${escHtml(t('chipAcc', s.acceptanceCount ?? 0))}</span>`,
+        `<span class="uz-tc s-ret">${escHtml(t('chipRet', s.returnCount ?? 0))}</span>`,
+        `<span class="uz-tc s-par">${escHtml(t('chipPartner', s.partnerCount ?? 0))}</span>`
+      ].join('');
+      return `
+        <div class="uz-hcard">
+          <div class="uz-hname">
+            ${escHtml(item.pvzName)}
+            <small>ID ${escHtml(item.dpKey)} · ${escHtml(item.date)} ${escHtml(item.time)} · ${escHtml(item.auditor || '')}</small>
+            <div class="uz-chips">${chips}</div>
+          </div>
+          <div class="uz-acts">
+            <button type="button" class="uz-btn pri u-dl" data-id="${escHtml(item.id)}">${escHtml(t('btnXlsx'))}</button>
+            <button type="button" class="uz-btn danger u-del" data-id="${escHtml(item.id)}" title="${escHtml(t('deleteTitle'))}">✕</button>
+          </div>
+        </div>`;
+    }).join('');
+
+    box.querySelectorAll('.u-dl').forEach(b => {
+      b.onclick = () => {
+        const found = getHistoryList().find(x => x.id === b.getAttribute('data-id'));
+        if (!found) return;
+        exportCleanXlsx(found.report, {
+          date: found.date,
+          time: found.time,
+          pvzName: found.pvzName,
+          dpKey: found.dpKey,
+          auditor: found.auditor,
+          totalOrders: found.stats?.totalOrders,
+          totalPlanUnits: found.stats?.totalPlanUnits,
+          totalScanned: found.stats?.totalScanned,
+          timing: found.timing || null
+        });
+      };
+    });
+
+    box.querySelectorAll('.u-del').forEach(b => {
+      b.onclick = () => {
+        if (!confirm(t('confirmDelete'))) return;
+        const id = b.getAttribute('data-id');
+        writeHistory(getHistoryList().filter(x => x.id !== id));
+        renderHistoryScreen($('u-hist-search').value);
+      };
+    });
+  }
+
+  // ---------------------------------------------------------------- setup / flow
+  function fillSetup() {
+    const detectedName = detectPvzNameFromHeader();
+    const liveDpKey = detectLiveDpKey();
+    if (detectedName && detectedName !== 'ПВЗ') state.activePvzName = detectedName;
+    if (liveDpKey) state.dpKey = liveDpKey;
+    $('u-pvz-name-input').value = state.activePvzName;
+    $('u-pvz-dpkey-input').value = state.dpKey || '';
+    $('u-issue-count').textContent = detectOrdersCount();
+    if (state.dpKey) setDpStatus('idle', t('dpNotChecked'));
+    else setDpStatus('bad', t('dpEmpty'));
+  }
+
+  function restartRevision() {
+    if (state.totalScannedUnits > 0 && !state.savedInSession && !confirm(t('restartConfirm'))) return;
+    resetInventoryState();
+    resetTiming();
+    state.workScreen = 'start';
+    fillSetup();
+    showScreen('start');
+  }
+
+  // Tugma bosilganda: avval ID WMS'da tekshiriladi, keyin yuklash boshlanadi
+  async function onLoadClick() {
+    if (state.loading) return;
+    const btn = $('u-load-btn');
+    const prog = $('u-progress');
+    const pvzName = $('u-pvz-name-input').value.trim();
+    const dpKey = $('u-pvz-dpkey-input').value.trim();
+
+    if (state.totalScannedUnits > 0 && !state.savedInSession && !confirm(t('restartConfirm'))) return;
+
+    state.loading = true;
+    btn.disabled = true;
+    btn.textContent = t('loadingBtn');
+    prog.textContent = t('dpChecking');
+    setDpStatus('busy', t('dpChecking'));
+
+    try {
+      const check = await validateDpKey(dpKey);
+
+      // Sahifadagi "К выдаче" soni bilan solishtirish (agar WMS jami sonini bersa)
+      const pageCount = readIssueCountStrict();
+      if (check.total != null && pageCount != null && check.total !== pageCount) {
+        if (!confirm(t('dpMismatch', pageCount, check.total))) {
+          setDpStatus('idle', t('dpNotChecked'));
+          prog.textContent = '';
+          return;
+        }
+      }
+
+      setDpStatus('ok', t('dpOk', dpKey));
+      state.activePvzName = pvzName || state.activePvzName;
+      state.dpKey = dpKey;
+
+      await loadInventoryData(msg => { prog.textContent = msg; });
+      startTiming();
+      prog.textContent = '';
+      showScreen('scan');
+    } catch (err) {
+      prog.textContent = '';
+      setDpStatus('bad', err.message);
+      alert(err.message);
+    } finally {
+      state.loading = false;
+      btn.disabled = false;
+      btn.textContent = t('loadBtn');
+    }
+  }
+
+  function openModal() {
+    refreshLocale(true);
+    ensureModal();
+    applyStaticTexts();
+    $('uzum-inv-modal').style.display = 'flex';
+
+    if (state.screen === 'history') {
+      showScreen('history');
+    } else if (state.workScreen === 'scan' || state.workScreen === 'report') {
+      showScreen(state.workScreen);
+    } else {
+      fillSetup();
+      showScreen('start');
+    }
+  }
+
+  // ---------------------------------------------------------------- modal
   function ensureModal() {
     ensureStyle();
     if ($('uzum-inv-modal')) return;
@@ -1984,161 +2774,161 @@
     const modal = document.createElement('div');
     modal.id = 'uzum-inv-modal';
     modal.innerHTML = `
-      <div class="rv-shell" role="dialog" aria-modal="true" aria-labelledby="u-app-name">
-        <header class="rv-top">
-          <div class="rv-logo">R</div>
-          <div class="rv-brand">
-            <div class="rv-title" id="u-app-name"></div>
-            <div class="rv-sub" id="u-subtitle"></div>
+      <div class="uz-app" role="dialog" aria-modal="true" aria-labelledby="u-h1">
+        <aside class="uz-side">
+          <div class="uz-brand">
+            <div class="uz-logo">R</div>
+            <div>
+              <div class="uz-brand-t" id="u-app-name"></div>
+              <div class="uz-brand-s">v${VERSION}</div>
+            </div>
           </div>
-          <span class="rv-ver">v${VERSION}</span>
-          <button id="u-close" class="rv-x" type="button"></button>
-        </header>
-
-        <nav class="rv-nav">
-          <div class="rv-seg">
-            <button id="u-tab-new" class="rv-navbtn active" type="button"></button>
-            <button id="u-tab-history" class="rv-navbtn" type="button"></button>
+          <nav class="uz-nav">
+            <button type="button" class="uz-navbtn active" id="u-tab-new"><span class="uz-navic">＋</span><span id="u-tab-new-t"></span></button>
+            <button type="button" class="uz-navbtn" id="u-tab-history"><span class="uz-navic">▤</span><span id="u-tab-history-t"></span></button>
+          </nav>
+          <div class="uz-pvzcard">
+            <span class="uz-lbl" id="u-side-lbl"></span>
+            <b id="u-side-pvz">—</b>
           </div>
-        </nav>
+        </aside>
 
-        <main class="rv-body">
-          <section id="u-start-screen" class="rv-setup">
-            <div class="rv-panel">
-              <div class="rv-hero" aria-hidden="true">📦</div>
-              <h2 class="rv-h2" id="u-params-title"></h2>
-              <div class="rv-fields">
-                <div class="rv-field">
-                  <label class="rv-label" for="u-pvz-name-input" id="u-lbl-pvz"></label>
-                  <input type="text" id="u-pvz-name-input" class="rv-in">
+        <main class="uz-main">
+          <header class="uz-head">
+            <div class="uz-head-l">
+              <h1 class="uz-h1" id="u-h1"></h1>
+              <p class="uz-sub" id="u-sub"></p>
+            </div>
+            <div class="uz-head-a" id="u-head-actions"></div>
+            <button type="button" class="uz-x" id="u-close">✕</button>
+          </header>
+
+          <div class="uz-steps" id="u-steps">
+            <div class="uz-step" data-step="start"><span class="uz-dot">1</span><span class="lbl" id="u-step-1"></span></div>
+            <div class="uz-step" data-step="scan"><span class="uz-dot">2</span><span class="lbl" id="u-step-2"></span></div>
+            <div class="uz-step" data-step="report"><span class="uz-dot">3</span><span class="lbl" id="u-step-3"></span></div>
+          </div>
+
+          <div class="uz-body">
+            <section id="u-start-screen" class="uz-setup" style="display:none">
+              <div class="uz-card">
+                <div class="uz-hero" aria-hidden="true">📦</div>
+                <div class="uz-form">
+                  <div class="uz-field">
+                    <label class="uz-lbl" for="u-pvz-name-input" id="u-lbl-pvz"></label>
+                    <input type="text" id="u-pvz-name-input" class="uz-in" autocomplete="off">
+                  </div>
+                  <div class="uz-field">
+                    <label class="uz-lbl" for="u-pvz-dpkey-input" id="u-lbl-dpkey"></label>
+                    <input type="text" id="u-pvz-dpkey-input" class="uz-in" autocomplete="off" inputmode="numeric">
+                  </div>
                 </div>
-                <div class="rv-field">
-                  <label class="rv-label" for="u-pvz-dpkey-input" id="u-lbl-dpkey"></label>
-                  <input type="text" id="u-pvz-dpkey-input" class="rv-in">
+                <div class="uz-issue">
+                  <span class="uz-lbl" id="u-lbl-issue"></span>
+                  <b id="u-issue-count">—</b>
+                </div>
+                <div class="uz-note" id="u-ordersnote"></div>
+                <div id="u-dp-status" class="uz-dpst s-mut"></div>
+                <div style="margin-top:18px"><button type="button" id="u-load-btn" class="uz-btn pri big"></button></div>
+                <div id="u-progress" class="uz-prog"></div>
+              </div>
+            </section>
+
+            <section id="u-scan-screen" style="display:none">
+              <div class="uz-stats">
+                <div class="uz-stat"><span class="uz-lbl" id="u-lbl-stat-orders"></span><b id="u-sc-orders">0</b></div>
+                <div class="uz-stat"><span class="uz-lbl" id="u-lbl-stat-plan"></span><b id="u-sc-plan">0</b></div>
+                <div class="uz-stat hl"><span class="uz-lbl" id="u-lbl-stat-scanned"></span><b id="u-sc-total">0</b></div>
+                <div class="uz-stat uz-stat-ring">
+                  <div class="uz-ring">
+                    <svg viewBox="0 0 80 80"><circle class="bg" cx="40" cy="40" r="${RING_R}"></circle><circle class="fg" id="u-ring-fg" cx="40" cy="40" r="${RING_R}"></circle></svg>
+                    <div class="uz-ring-t" id="u-ring-t">0%</div>
+                  </div>
                 </div>
               </div>
-              <div id="u-pvz-display-orders" class="rv-orders"></div>
-              <div class="rv-setup-go"><button id="u-load-btn" class="rv-btn teal big" type="button"></button></div>
-              <div id="u-progress" class="rv-prog"></div>
-            </div>
-          </section>
-
-          <section id="u-scan-screen" style="display:none;">
-            <div class="rv-kpis">
-              <div class="rv-kpi"><div class="rv-label" id="u-lbl-stat-orders"></div><b id="u-sc-orders">0</b></div>
-              <div class="rv-kpi"><div class="rv-label" id="u-lbl-stat-plan"></div><b id="u-sc-plan">0</b></div>
-              <div class="rv-kpi"><div class="rv-label" id="u-lbl-stat-scanned"></div><b id="u-sc-total" class="rv-accent">0</b></div>
-            </div>
-            <div class="rv-progress">
-              <div class="rv-meter"><div id="u-bar-fill"></div></div>
-              <div class="rv-meterlbl" id="u-bar-label"></div>
-            </div>
-
-            <div class="rv-work">
-              <div class="rv-panel rv-cellbox">
-                <div class="rv-label" id="u-lbl-cell"></div>
-                <div id="u-active-cell" class="rv-cell empty"></div>
+              <div class="uz-meter"><div id="u-bar-fill"></div></div>
+              <div class="uz-barrow">
+                <span class="uz-barlbl" id="u-bar-label"></span>
+                <span class="uz-timer">
+                  <span id="u-lbl-timer"></span>
+                  <b id="u-timer">00:00:00</b>
+                  <span id="u-timer-total"></span>
+                </span>
               </div>
-              <div class="rv-panel">
-                <div class="rv-label" id="u-lbl-last"></div>
-                <div id="u-last-barcode" class="rv-last">—</div>
-                <div id="u-scan-hint" class="rv-hint"></div>
+
+              <div class="uz-work">
+                <div class="uz-cellcard">
+                  <span class="uz-lbl" id="u-lbl-cell"></span>
+                  <div id="u-active-cell" class="uz-cell empty"></div>
+                </div>
+                <div class="uz-card uz-lastcard">
+                  <span class="uz-lbl" id="u-lbl-last"></span>
+                  <div id="u-last-barcode" class="uz-code">—</div>
+                  <div id="u-scan-hint" class="uz-hint"></div>
+                </div>
               </div>
-            </div>
 
-            <div class="rv-scanrow">
-              <input type="text" id="u-barcode-input" autocomplete="off">
-              <button id="u-undo-btn" class="rv-btn" type="button"></button>
-            </div>
+              <div class="uz-scanrow">
+                <input type="text" id="u-barcode-input" class="uz-scan" autocomplete="off" spellcheck="false">
+                <button type="button" id="u-undo-btn" class="uz-btn"></button>
+              </div>
 
-            <div class="rv-listhead">
-              <span id="u-lbl-cell-items"></span>
-              <button id="u-finish-btn" class="rv-btn green" type="button"></button>
-            </div>
-            <div id="u-cell-items" class="rv-list"></div>
-          </section>
+              <div class="uz-listh"><span id="u-lbl-cell-items"></span></div>
+              <div id="u-cell-items" class="uz-list"></div>
+            </section>
 
-          <section id="u-report-screen" style="display:none;"></section>
+            <section id="u-report-screen" style="display:none"></section>
 
-          <section id="u-history-screen" style="display:none;">
-            <div class="rv-hhead">
-              <h3 id="u-hist-title"></h3>
-              <input type="text" id="u-hist-search">
-            </div>
-            <div id="u-hist-container"></div>
-          </section>
+            <section id="u-history-screen" style="display:none">
+              <input type="search" id="u-hist-search" class="uz-hsearch">
+              <div id="u-hist-container"></div>
+            </section>
+          </div>
         </main>
       </div>
     `;
     document.body.appendChild(modal);
 
-    $('u-close').onclick = () => { modal.style.display = 'none'; };
-    $('u-undo-btn').onclick = () => { undoLastScan(); $('u-barcode-input').focus(); };
+    // Faollikni kuzatish: ish vaqti shu hodisalar orqali hisoblanadi
+    modal.addEventListener('keydown', () => markActivity(), true);
+    modal.addEventListener('pointerdown', () => markActivity(), true);
+
+    $('u-close').onclick = closeModal;
     $('u-tab-new').onclick = () => showScreen(state.workScreen || 'start');
     $('u-tab-history').onclick = () => showScreen('history');
-    $('u-hist-search').oninput = (e) => renderHistoryScreen(e.target.value.trim());
+    $('u-hist-search').oninput = e => renderHistoryScreen(e.target.value);
+    $('u-load-btn').onclick = onLoadClick;
+    $('u-undo-btn').onclick = () => { undoLastScan(); focusScanInput(); };
 
-    $('u-load-btn').onclick = async () => {
-      const btn = $('u-load-btn');
-      if (btn.disabled) return;
-      state.activePvzName = $('u-pvz-name-input').value.trim() || state.activePvzName;
-      state.dpKey = $('u-pvz-dpkey-input').value.trim() || state.dpKey;
+    $('u-pvz-dpkey-input').addEventListener('input', e => {
+      if (e.target.value.trim()) setDpStatus('idle', t('dpNotChecked'));
+      else setDpStatus('bad', t('dpEmpty'));
+    });
 
-      const prog = $('u-progress');
-      btn.disabled = true;
-      try {
-        await loadInventoryData(msg => { prog.textContent = msg; });
-        prog.textContent = '';
-        showScreen('scan');
-        updateScannerUI();
-      } catch (err) {
-        prog.textContent = '';
-        alert(err.message);
-      } finally {
-        btn.disabled = false;
+    const scanInp = $('u-barcode-input');
+    scanInp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const code = scanInp.value.trim();
+        scanInp.value = '';
+        if (code) enqueueScan(code);
       }
-    };
-
-    $('u-finish-btn').onclick = () => renderReportScreen();
-
-    let scanBuffer = '';
-    let scanTimer = null;
-
-    const captureKey = (e) => {
-      if (!isScanningActive()) return;
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-
-      const input = $('u-barcode-input');
-      if (input && document.activeElement !== input) input.focus();
-
-      if (e.type === 'keydown') {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          const code = ((input ? input.value : '') || scanBuffer).trim();
-          if (input) input.value = '';
-          scanBuffer = '';
-          if (code) enqueueScan(code);
-        } else if (e.key.length === 1) {
-          scanBuffer += e.key;
-          clearTimeout(scanTimer);
-          scanTimer = setTimeout(() => { scanBuffer = ''; }, 120);
-        }
-      }
-    };
-
-    window.addEventListener('keydown', captureKey, true);
-    window.addEventListener('keypress', captureKey, true);
-    window.addEventListener('keyup', captureKey, true);
+    });
+    scanInp.addEventListener('blur', () => {
+      setTimeout(() => {
+        if (isScanningActive() && !isTypingElsewhere()) focusScanInput();
+      }, 60);
+    });
+    $('u-scan-screen').addEventListener('click', e => {
+      if (!e.target.closest('button,input')) focusScanInput();
+    });
   }
 
   // ---------------------------------------------------------------- button position
-  // Tugma endi Uzum sahifasi DOM'iga emas, body'ga qo'shiladi va
-  // PVZ tanlash maydonining chap tomonida (fixed) turadi. Sayt qayta
-  // render bo'lganda ham joyi o'zgarmaydi.
-  const BTN_GAP = 40;          // tugma va PVZ maydoni orasidagi masofa (px)
+  // Tugma body'ga qo'shiladi va PVZ tanlash maydonining chap tomonida turadi.
   let anchorEl = null;
   let anchorSearchAt = 0;
+  let lastPos = '';
 
   function getAnchor() {
     if (anchorEl && anchorEl.isConnected) {
@@ -2156,33 +2946,34 @@
   function positionButton() {
     const btn = $('uzum-inv-btn');
     if (!btn) return;
-    btn.style.display = '';
 
-    const bw = btn.offsetWidth || 150;
+    const anchor = getAnchor();
+    const bw = btn.offsetWidth || 170;
     const bh = btn.offsetHeight || 38;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const anchor = getAnchor();
     let left;
     let top;
+    let show = true;
 
     if (anchor) {
       const r = anchor.getBoundingClientRect();
-      if (r.bottom < 0 || r.top > vh) {          // PVZ maydoni ekrandan tashqarida
-        btn.style.display = 'none';
-        return;
-      }
+      if (r.bottom < 0 || r.top > vh) show = false;
       left = r.left - bw - BTN_GAP;
       top = r.top + (r.height - bh) / 2;
-      if (left < 8) {                             // juda tor ekran: tugmani maydon ostiga
+      if (left < 8) {
         left = Math.max(8, Math.min(r.right - bw, vw - bw - 8));
         top = r.bottom + 8;
       }
     } else {
-      left = Math.max(8, vw - 400 - bw);          // PVZ topilmasa: yuqori o'ng burchak
+      left = Math.max(8, vw - 420 - bw);
       top = 12;
     }
 
+    const key = `${show}|${Math.round(left)}|${Math.round(top)}`;
+    if (key === lastPos) return;
+    lastPos = key;
+    btn.style.display = show ? '' : 'none';
     btn.style.left = Math.round(left) + 'px';
     btn.style.top = Math.round(top) + 'px';
   }
@@ -2194,268 +2985,34 @@
       btn = document.createElement('button');
       btn.id = 'uzum-inv-btn';
       btn.type = 'button';
-      btn.onclick = openModal;
+      btn.addEventListener('click', openModal);
       document.body.appendChild(btn);
     }
-    const label = '📦 ' + I18N[LANG === 'uz' ? 'uz' : 'ru'].appName;
+    const label = `📦 ${t('appName')}`;
     if (btn.textContent !== label) btn.textContent = label;
-    positionButton();
   }
 
-  function injectUI() {
-    refreshLocale();
-    ensureModal();
-    ensureButton();
-  }
-
-  function openModal() {
-    refreshLocale();
-    ensureModal();
-    applyStaticTexts();
-    $('uzum-inv-modal').style.display = 'flex';
-
-    if (state.screen === 'start' || !state.workScreen || state.workScreen === 'start') {
-      const detectedName = detectPvzNameFromHeader();
-      const liveDpKey = detectLiveDpKey();
-      const ordersCount = detectOrdersCount();
-
-      if (detectedName !== 'ПВЗ') state.activePvzName = detectedName;
-      state.dpKey = liveDpKey || state.dpKey || '';
-
-      $('u-pvz-name-input').value = state.activePvzName;
-      $('u-pvz-dpkey-input').value = state.dpKey || '';
-      $('u-pvz-display-orders').textContent = ordersCount === '—' ? t('ordersToIssueEmpty') : t('ordersToIssue', ordersCount);
-      showScreen('start');
-    } else {
-      showScreen(state.workScreen);
-    }
-    renderReportScreenIfOpen();
-    updateScannerUI();
-  }
-
-  function renderReportScreenIfOpen() {
-    if (state.screen === 'report') renderReportScreen();
-  }
-
-  function updateScannerUI(lastBarcode = '—', statusType = 'NORMAL', hintText = '') {
-    if (!$('u-active-cell')) return;
-
-    const cellEl = $('u-active-cell');
-    cellEl.textContent = state.activeCell || t('cellPlaceholder');
-    cellEl.classList.toggle('empty', !state.activeCell);
-    $('u-last-barcode').textContent = lastBarcode;
-
-    $('u-sc-orders').textContent = state.totalOrdersCount;
-    $('u-sc-plan').textContent = t('pcs', state.totalPlanUnits);
-    $('u-sc-total').textContent = t('pcs', state.totalScannedUnits);
-
-    const found = Object.values(state.factGlobal).reduce((a, b) => a + b, 0);
-    const pct = state.totalPlanUnits ? Math.min(100, Math.round(found / state.totalPlanUnits * 100)) : 0;
-    $('u-bar-fill').style.width = pct + '%';
-    $('u-bar-label').textContent = t('barLabel', found, state.totalPlanUnits, pct);
-
-    const classes = { OK: 's-ok', INFO: 's-warn', ACCEPTANCE: 's-acc', RETURN: 's-ret', FOREIGN: 's-bad', SEARCH: 's-search' };
-    const hintEl = $('u-scan-hint');
-    hintEl.className = 'rv-hint ' + (classes[statusType] || '');
-    hintEl.textContent = hintText || (state.activeCell ? t('hintScanItems') : t('hintNeedCell'));
-
-    const container = $('u-cell-items');
-    const orderItems = (state.activeCell && state.factCellUnits[state.activeCell]) || {};
-    const accItems = (state.activeCell && state.acceptanceScans[state.activeCell]) || {};
-    const retItems = (state.activeCell && state.returnScans[state.activeCell]) || {};
-    const forItems = (state.activeCell && state.foreignScans[state.activeCell]) || {};
-
-    const hasAny = Object.keys(orderItems).length + Object.keys(accItems).length + Object.keys(retItems).length + Object.keys(forItems).length > 0;
-
-    if (!hasAny) {
-      container.innerHTML = `<div class="rv-empty">${escHtml(t('emptyCell'))}</div>`;
-      return;
-    }
-
-    let rows = '';
-    Object.entries(orderItems).forEach(([oId, qty]) => {
-      const order = state.ordersMap[oId];
-      const bank = order?.kind === 'BANK' ? ` <span class="rv-tag s-info">${escHtml(t('badgeBank'))}</span>` : '';
-      rows += `<tr><td><b>${escHtml(t('orderLabel', order?.pid || oId))}</b>${bank} <span class="rv-muted">${escHtml(order?.customer?.firstName || '')}</span></td><td class="rv-r s-ok">${escHtml(t('pcs', qty))}</td></tr>`;
-    });
-    Object.entries(accItems).forEach(([code, data]) => {
-      rows += `<tr class="s-acc"><td><span class="mono">${escHtml(code)}</span><span class="rv-tag s-acc">${escHtml(t('badgeAcc'))}</span></td><td class="rv-r s-acc">+${escHtml(t('pcs', data.count))}</td></tr>`;
-    });
-    Object.entries(retItems).forEach(([code, data]) => {
-      rows += `<tr class="s-ret"><td><span class="mono">${escHtml(code)}</span><span class="rv-tag s-ret">${escHtml(t('badgeRet'))}</span></td><td class="rv-r s-ret">+${escHtml(t('pcs', data.count))}</td></tr>`;
-    });
-    Object.entries(forItems).forEach(([code, qty]) => {
-      rows += `<tr class="s-bad"><td><span class="mono">${escHtml(code)}</span><span class="rv-tag s-bad">${escHtml(t('badgeForeign'))}</span></td><td class="rv-r s-bad">+${escHtml(t('pcs', qty))}</td></tr>`;
-    });
-
-    container.innerHTML = `<table class="rv-tbl"><thead><tr><th>${escHtml(t('colOrderBarcode'))}</th><th style="text-align:right">${escHtml(t('colQty'))}</th></tr></thead><tbody>${rows}</tbody></table>`;
-  }
-
-  const rvTable = (heads, rows) =>
-    `<div class="rv-scroll"><table class="rv-tbl"><thead><tr>${heads.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
-  const rvNone = (txt, ok) => `<div class="rv-none ${ok ? 'ok' : ''}">${txt}</div>`;
-  const rvSection = (cls, title, count, units, body) =>
-    `<div class="rv-sec ${cls}"><div class="rv-sec-h"><span>${title}</span><span class="rv-pill">${t('pos', count)} · ${units}</span></div>${body}</div>`;
-
-  function renderReportScreen() {
-    refreshLocale();
-    const report = buildReport();
-    const container = $('u-report-screen');
-
-    const tiles = [
-      { cls: 's-bad', tt: t('tileShort'), n: report.pureShortages.length, u: `-${t('pcs', report.totalShortageUnits)}` },
-      { cls: 's-warn', tt: t('tileMis'), n: report.mismatchedCells.length, u: t('pcs', report.totalMismatchUnits) },
-      { cls: 's-acc', tt: t('tileAcc'), n: report.inAcceptance.length, u: t('pcs', report.totalAcceptanceUnits) },
-      { cls: 's-ret', tt: t('tileRet'), n: report.canceledReturns.length, u: t('pcs', report.totalReturnUnits) },
-      { cls: 's-mut', tt: t('tileSur'), n: report.pureSurplus.length, u: `+${t('pcs', report.totalSurplusUnits)}` }
-    ];
-
-    let html = `
-      <div class="rv-rhead">
-        <div>
-          <h3>${escHtml(t('reportTitle', state.activePvzName))}</h3>
-          <div class="rv-rmeta">${t('reportMeta', state.totalOrdersCount, state.totalPlanUnits, state.totalScannedUnits)}</div>
-        </div>
-        <div class="rv-acts">
-          <button id="u-save-audit-btn" class="rv-btn green" type="button">${t('btnSave')}</button>
-          <button id="u-excel-btn" class="rv-btn teal" type="button">${t('btnExcel')}</button>
-          <button id="u-resume-btn" class="rv-btn" type="button">${t('btnBack')}</button>
-        </div>
-      </div>
-      <div class="rv-tiles">${tiles.map(x => `<div class="rv-tile ${x.cls}"><div class="n">${x.n}</div><div class="t">${x.tt}</div><div class="u">${x.u}</div></div>`).join('')}</div>`;
-
-    html += rvSection('s-bad', t('secShort'), report.pureShortages.length, `-${t('pcs', report.totalShortageUnits)}`,
-      report.pureShortages.length === 0
-        ? rvNone(t('noShort'), true)
-        : rvTable([t('thPid'), t('thMissing'), t('thShelf'), t('thClient')], report.pureShortages.map(r => `<tr>
-            <td>${pidHtml(r)}</td>
-            <td class="s-bad" style="font-weight:800">-${escHtml(t('pcs', r.missingCount))}</td>
-            <td>${escHtml(cellLabel(r.expectedCell))}</td>
-            <td>${escHtml(r.customer?.firstName || '')} ${r.customer?.phone ? '<span class="rv-muted">(' + escHtml(r.customer.phone) + ')</span>' : ''}</td></tr>`).join('')));
-
-    html += rvSection('s-warn', t('secMis'), report.mismatchedCells.length, t('pcs', report.totalMismatchUnits),
-      report.mismatchedCells.length === 0
-        ? rvNone(t('noMis'), true)
-        : rvTable([t('thPid'), t('thQty'), t('thPlanCell'), t('thActualCell')], report.mismatchedCells.map(r => `<tr>
-            <td>${pidHtml(r)}</td>
-            <td style="font-weight:800">${escHtml(t('pcs', r.count))}</td>
-            <td class="s-bad" style="font-weight:800">${escHtml(cellLabel(r.expectedCell))}</td>
-            <td class="s-ok" style="font-weight:800">${escHtml(r.actualCell)}</td></tr>`).join('')));
-
-    html += rvSection('s-acc', t('secAcc'), report.inAcceptance.length, t('pcs', report.totalAcceptanceUnits),
-      report.inAcceptance.length === 0
-        ? rvNone(t('noAcc'), false)
-        : rvTable([t('thBarcodeLoc'), t('thQty'), t('thShelf'), t('thRec')], report.inAcceptance.map(r => `<tr>
-            <td class="mono">${escHtml(r.code)}</td>
-            <td class="rv-r s-acc">+${escHtml(t('pcs', r.count))}</td>
-            <td>${escHtml(t('cellWord'))} ${escHtml(r.foundCell)}</td>
-            <td style="font-weight:700">${escHtml(t('recAcc'))}</td></tr>`).join('')));
-
-    html += rvSection('s-ret', t('secRet'), report.canceledReturns.length, t('pcs', report.totalReturnUnits),
-      report.canceledReturns.length === 0
-        ? rvNone(t('noRet'), false)
-        : rvTable([t('thBarcodeLoc'), t('thQty'), t('thShelf'), t('thRec')], report.canceledReturns.map(r => `<tr>
-            <td class="mono">${escHtml(r.code)}</td>
-            <td class="rv-r s-ret">+${escHtml(t('pcs', r.count))}</td>
-            <td>${escHtml(t('cellWord'))} ${escHtml(r.foundCell)}</td>
-            <td style="font-weight:700">${escHtml(t('recRet'))}</td></tr>`).join('')));
-
-    html += rvSection('s-mut', t('secSur'), report.pureSurplus.length, `+${t('pcs', report.totalSurplusUnits)}`,
-      report.pureSurplus.length === 0
-        ? rvNone(t('noSur'), false)
-        : rvTable([t('thBarcode'), t('thExtra'), t('thFoundAt')], report.pureSurplus.map(r => `<tr>
-            <td class="mono">${escHtml(r.code)}</td>
-            <td class="rv-r s-bad">+${escHtml(t('pcs', r.qty))}</td>
-            <td>${escHtml(t('cellWord'))} ${escHtml(r.foundCell)}</td></tr>`).join('')));
-
-    container.innerHTML = html;
-    showScreen('report');
-
-    $('u-save-audit-btn').onclick = saveAuditPermanently;
-    $('u-excel-btn').onclick = () => exportCleanXlsx();
-    $('u-resume-btn').onclick = () => showScreen('scan');
-  }
-
-  function renderHistoryScreen(searchFilter = '') {
-    refreshLocale();
-    const container = $('u-hist-container');
-    const list = getHistoryList();
-
-    if (list.length === 0) {
-      container.innerHTML = `<div class="rv-empty">${escHtml(t('histEmpty'))}</div>`;
-      return;
-    }
-
-    let filtered = list;
-    if (searchFilter) {
-      const q = searchFilter.toLowerCase();
-      filtered = list.filter(item => JSON.stringify(item).toLowerCase().includes(q));
-    }
-
-    if (filtered.length === 0) {
-      container.innerHTML = `<div class="rv-empty">${escHtml(t('histNotFound'))}</div>`;
-      return;
-    }
-
-    let html = '';
-    filtered.forEach(item => {
-      const s = item.stats || {};
-      html += `
-        <div class="rv-hist">
-          <div class="h1">
-            ${escHtml(item.pvzName)} <span>· ID ${escHtml(item.dpKey)} · ${escHtml(item.date)} ${escHtml(item.time)}</span>
-            <div class="rv-chips">
-              <span class="rv-chip">${escHtml(t('chipOrders', s.totalOrders ?? 0))}</span>
-              <span class="rv-chip">${escHtml(t('chipPlan', s.totalPlanUnits ?? 0))}</span>
-              <span class="rv-chip">${escHtml(t('chipFact', s.totalScanned ?? 0))}</span>
-              <span class="rv-chip s-bad">${escHtml(t('chipShort', s.shortageCount ?? 0))}</span>
-              <span class="rv-chip s-warn">${escHtml(t('chipMis', s.mismatchCount ?? 0))}</span>
-              <span class="rv-chip s-acc">${escHtml(t('chipAcc', s.acceptanceCount ?? 0))}</span>
-              <span class="rv-chip s-ret">${escHtml(t('chipRet', s.returnCount ?? 0))}</span>
-            </div>
-          </div>
-          <div class="rv-acts">
-            <button class="rv-btn teal u-download-past-btn" type="button" data-id="${escHtml(item.id)}">${t('btnXlsx')}</button>
-            <button class="rv-btn danger u-delete-past-btn" type="button" data-id="${escHtml(item.id)}" title="${escHtml(t('deleteTitle'))}">✕</button>
-          </div>
-        </div>`;
-    });
-
-    container.innerHTML = html;
-
-    container.querySelectorAll('.u-download-past-btn').forEach(b => {
-      b.onclick = () => {
-        const found = getHistoryList().find(x => x.id === b.getAttribute('data-id'));
-        if (found) {
-          exportCleanXlsx(found.report, {
-            date: found.date,
-            time: found.time,
-            pvzName: found.pvzName,
-            dpKey: found.dpKey,
-            auditor: found.auditor,
-            totalOrders: found.stats.totalOrders,
-            totalPlanUnits: found.stats.totalPlanUnits,
-            totalScanned: found.stats.totalScanned
-          });
-        }
-      };
-    });
-
-    container.querySelectorAll('.u-delete-past-btn').forEach(b => {
-      b.onclick = () => {
-        if (!confirm(t('confirmDelete'))) return;
-        const id = b.getAttribute('data-id');
-        writeHistory(getHistoryList().filter(x => x.id !== id));
-        renderHistoryScreen($('u-hist-search').value.trim());
-      };
-    });
+  function closeOnEscape(e) {
+    if (e.key === 'Escape' && isModalOpen()) closeModal();
   }
 
   // ---------------------------------------------------------------- boot
   window.__uzumState = state;
-  injectUI();
+  refreshLocale(true);
+  ensureStyle();
+  ensureModal();
+  ensureButton();
+  positionButton();
+
   window.addEventListener('resize', positionButton);
   window.addEventListener('scroll', positionButton, true);
-  setInterval(injectUI, 2000);
-  setInterval(positionButton, 250);
+  document.addEventListener('keydown', closeOnEscape);
+  setInterval(() => {
+    refreshLocale();
+    ensureButton();
+    positionButton();
+  }, 400);
+  setInterval(() => {
+    if (isModalOpen() && state.screen === 'scan') updateTimerUI();
+  }, 1000);
 })();
