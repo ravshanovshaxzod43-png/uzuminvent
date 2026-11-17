@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Uzum Ревизор ПВЗ
 // @namespace    https://dp.uzum.uz/
-// @version      1.7.3
-// @description  Ревизия склада ПВЗ Uzum Market: проверка ID точки, потоварная инвентаризация, приёмка, возвраты, пересорт, партнёрские заказы (SX/RX), время работы, история и Excel-акт
+// @version      1.7.2
+// @description  Ревизия склада ПВЗ Uzum Market: потоварная инвентаризация, приёмка, возвраты, пересорт, партнёрские заказы (SX/RX), история и Excel-акт
 // @author       Хожиев Сухроб
 // @match        https://dp.uzum.uz/*
 // @icon         https://dp.uzum.uz/favicon.ico
@@ -16,7 +16,7 @@
   if (window.__uzumInvLoaded) return;
   window.__uzumInvLoaded = true;
 
-  const VERSION = '1.7.3';
+  const VERSION = '1.7.2';
   const API = 'https://api-wms.uzum.uz/de/delivery-point';
   const API_V3 = 'https://api-wms.uzum.uz/de/v3/delivery-point';
   const HISTORY_KEY = 'uzum_inventory_history';
@@ -25,8 +25,6 @@
   const BTN_GAP = 40;
   const RING_R = 32;
   const RING_C = 2 * Math.PI * RING_R;
-  const IDLE_LIMIT_MS = 2 * 60 * 1000;
-  const DPKEY_RE = /^[A-Za-z0-9_-]{1,40}$/;
   const jwtRegex = /eyJ[a-zA-Z0-9_-]{25,}\.eyJ[a-zA-Z0-9_-]{25,}\.[a-zA-Z0-9_-]{25,}/g;
   const PARTNER_RE = /^(SX|RX)(?![A-Z])/i;
 
@@ -63,12 +61,11 @@
       issueLabel: 'Заказов к выдаче',
       ordersFromPage: 'Берётся со страницы «Заказы клиентов».',
       loadBtn: 'Выгрузить остатки и начать',
-      loadingBtn: 'Проверка...',
+      loadingBtn: 'Загрузка...',
       statOrders: 'Заказов к выдаче',
       statPlan: 'Товаров по плану',
       statScanned: 'Отсканировано',
       barLabel: (f, tot) => `Найдено ${f} из ${tot} шт`,
-      timerLabel: 'Ish vaqti',
       cellActive: 'Активная ячейка',
       cellPlaceholder: 'Отсканируйте ячейку',
       lastBarcode: 'Последний код',
@@ -120,13 +117,6 @@
       loadItems: (a, b) => `Загрузка состава товаров: ${a} из ${b}`,
       confirmFailed: n => `Не удалось загрузить состав ${n} заказов (для них план принят как 1 шт).\nПродолжить ревизию?`,
       errLoadCancelled: 'Загрузка отменена. Повторите попытку.',
-      dpChecking: 'Проверка ID точки в WMS...',
-      dpEmpty: 'ID точки (dpKey) не определён. Введите его вручную и нажмите кнопку ещё раз.',
-      dpFormat: 'ID точки может содержать только латинские буквы, цифры, «-» и «_».',
-      dpInvalid: id => `ID ${id} не подтверждён WMS. Проверьте значение или обновите страницу (F5).`,
-      dpOk: id => `ID ${id} подтверждён WMS`,
-      dpNotChecked: 'ID ещё не проверен. Нажмите «Выгрузить остатки».',
-      dpMismatch: (page, api) => `На странице «К выдаче»: ${page}, а в WMS по этому ID: ${api}. ID может быть неверным. Продолжить?`,
       alreadySaved: 'Эта ревизия уже сохранена. Для новой нажмите «Новая ревизия».',
       savedOk: pvz => `✓ Ревизия ПВЗ ${pvz} сохранена в базу!\nАкт доступен во вкладке «История».`,
       saveFail: '⚠️ Не удалось сохранить ревизию в базу браузера (нет места). Акт .xlsx будет скачан.',
@@ -142,7 +132,6 @@
       chipAcc: n => `Приёмка ${n}`,
       chipRet: n => `Возвраты ${n}`,
       chipPartner: n => `Партнёры ${n}`,
-      chipTime: (tot, act) => `Время ${tot} · работа ${act}`,
       btnXlsx: 'Скачать .xlsx',
       btnSave: 'Завершить целиком',
       btnSaved: 'Сохранено ✓',
@@ -152,12 +141,6 @@
       metaOrders: 'Заказов',
       metaPlan: 'По плану',
       metaScanned: 'Отсканировано',
-      timeStart: 'Начало',
-      timeTotal: 'Общее время',
-      timeActive: 'Рабочее время',
-      timeSpeed: 'Скорость',
-      speedVal: n => `${n} шт/ч`,
-      speedNA: '—',
       tileShort: 'Недостачи',
       tileMis: 'Не на полке',
       tileAcc: 'В приёмке',
@@ -211,7 +194,6 @@
       tgOrders: n => `Заказов: ${n}`,
       tgPlan: n => `План: ${n} шт`,
       tgFact: n => `Факт: ${n} шт`,
-      tgTime: (tot, act) => `⏱ Время: ${tot} (рабочее: ${act})`,
       tgShort: (c, u) => `🔴 Недостачи: ${c} поз. (-${u} шт)`,
       tgMis: (c, u) => `🟡 Не на полке: ${c} поз. (${u} шт)`,
       tgAcc: (c, u) => `⚠️ В приёмке: ${c} поз. (${u} шт)`,
@@ -239,7 +221,6 @@
       xSumRet: 'Отменённые / возвраты (к отгрузке на склад):',
       xSumSur: 'Чужие товары (не числятся за ПВЗ):',
       xSumPartner: 'Партнёрские заказы SX/RX с проблемой:',
-      xSumTime: 'Затраченное время (общее / рабочее):',
       xStPlanToIssue: 'План к выдаче',
       xStPlanPcs: 'План штук',
       xStFact: 'Факт на складе',
@@ -249,7 +230,6 @@
       xStRet: n => `${n} шт (срочно снять с полки на склад)`,
       xStSur: n => `+${n} шт в коробку возвратов`,
       xStPartner: n => `${n} шт с проблемой`,
-      xStTime: (act, s, e) => `Рабочее: ${act} · с ${s} до ${e}`,
       xS1: 'РАЗДЕЛ 1. НЕДОСТАЧИ (ЗАКАЗЫ, КОТОРЫХ НЕТ НА СКЛАДЕ)',
       xS2: 'РАЗДЕЛ 2. ЗАКАЗЫ НЕ НА СВОЕЙ ПОЛКЕ (ТОВАР НА СКЛАДЕ, НО НЕ НА ПЛАНОВОЙ ПОЛКЕ)',
       xS3: 'РАЗДЕЛ 3. ТОВАРЫ В ПРИЁМКЕ (НЕ ПРИНЯТЫ ПОЛНОСТЬЮ — НЕ ОТПРАВЛЯТЬ НА СКЛАД!)',
@@ -297,12 +277,11 @@
       issueLabel: 'Berishga buyurtmalar',
       ordersFromPage: 'Sahifadagi «Mijoz buyurtmalari» bo\'limidan olinadi.',
       loadBtn: 'Qoldiqlarni yuklab boshlash',
-      loadingBtn: 'Tekshirilmoqda...',
+      loadingBtn: 'Yuklanmoqda...',
       statOrders: 'Berishga buyurtmalar',
       statPlan: 'Reja bo\'yicha mahsulotlar',
       statScanned: 'Skanerlangan',
       barLabel: (f, tot) => `Topildi ${f} / ${tot} dona`,
-      timerLabel: 'Ish vaqti',
       cellActive: 'Faol katak',
       cellPlaceholder: 'Katakni skanerlang',
       lastBarcode: 'Oxirgi kod',
@@ -354,13 +333,6 @@
       loadItems: (a, b) => `Mahsulotlar tarkibi yuklanmoqda: ${a} / ${b}`,
       confirmFailed: n => `${n} ta buyurtma tarkibini yuklab bo'lmadi (ular uchun reja 1 dona deb olindi).\nInventarizatsiyani davom ettirasizmi?`,
       errLoadCancelled: 'Yuklash bekor qilindi. Qaytadan urining.',
-      dpChecking: 'PVZ ID WMS da tekshirilmoqda...',
-      dpEmpty: 'Nuqta ID (dpKey) aniqlanmadi. Qo\'lda kiriting va tugmani yana bosing.',
-      dpFormat: 'Nuqta ID faqat lotin harf, raqam, «-» va «_» belgilaridan iborat bo\'lishi kerak.',
-      dpInvalid: id => `ID ${id} WMS tomonidan tasdiqlanmadi. Qiymatni tekshiring yoki sahifani yangilang (F5).`,
-      dpOk: id => `ID ${id} WMS tomonidan tasdiqlandi`,
-      dpNotChecked: 'ID hali tekshirilmagan. «Qoldiqlarni yuklab boshlash» tugmasini bosing.',
-      dpMismatch: (page, api) => `Sahifadagi «Berishga»: ${page} ta, WMS da bu ID bo'yicha: ${api} ta. ID noto'g'ri bo'lishi mumkin. Davom etasizmi?`,
       alreadySaved: 'Bu inventarizatsiya allaqachon saqlangan. Yangi inventarizatsiya uchun «Yangi inventarizatsiya» tugmasini bosing.',
       savedOk: pvz => `✓ ${pvz} inventarizatsiyasi bazaga saqlandi!\nAkt «Tarix» bo'limida mavjud.`,
       saveFail: '⚠️ Inventarizatsiyani brauzer bazasiga saqlab bo\'lmadi (joy yetarli emas). .xlsx akt yuklab olinadi.',
@@ -376,7 +348,6 @@
       chipAcc: n => `Qabul ${n}`,
       chipRet: n => `Qaytarish ${n}`,
       chipPartner: n => `Hamkor ${n}`,
-      chipTime: (tot, act) => `Vaqt ${tot} · ish ${act}`,
       btnXlsx: 'Yuklab olish .xlsx',
       btnSave: 'Butunlay yakunlash',
       btnSaved: 'Saqlangan ✓',
@@ -386,12 +357,6 @@
       metaOrders: 'Buyurtmalar',
       metaPlan: 'Reja bo\'yicha',
       metaScanned: 'Skanerlangan',
-      timeStart: 'Boshlangan',
-      timeTotal: 'Umumiy vaqt',
-      timeActive: 'Ish vaqti',
-      timeSpeed: 'Tezlik',
-      speedVal: n => `${n} dona/soat`,
-      speedNA: '—',
       tileShort: 'Kamomad',
       tileMis: 'Joyida emas',
       tileAcc: 'Qabulda',
@@ -445,7 +410,6 @@
       tgOrders: n => `Buyurtmalar: ${n}`,
       tgPlan: n => `Reja: ${n} dona`,
       tgFact: n => `Fakt: ${n} dona`,
-      tgTime: (tot, act) => `⏱ Vaqt: ${tot} (ish: ${act})`,
       tgShort: (c, u) => `🔴 Kamomad: ${c} poz. (-${u} dona)`,
       tgMis: (c, u) => `🟡 Joyida emas: ${c} poz. (${u} dona)`,
       tgAcc: (c, u) => `⚠️ Qabulda: ${c} poz. (${u} dona)`,
@@ -473,7 +437,6 @@
       xSumRet: 'Bekor qilingan / qaytarishlar (omborga jo\'natish):',
       xSumSur: 'Begona mahsulotlar (PVZ ga tegishli emas):',
       xSumPartner: 'Hamkor (SX/RX) buyurtmalari muammoli:',
-      xSumTime: 'Sarflangan vaqt (umumiy / ish):',
       xStPlanToIssue: 'Berish rejasi',
       xStPlanPcs: 'Reja donalari',
       xStFact: 'Ombordagi fakt',
@@ -483,7 +446,6 @@
       xStRet: n => `${n} dona (zudlik bilan javondan olib omborga)`,
       xStSur: n => `+${n} dona qaytarish qutisiga`,
       xStPartner: n => `${n} dona muammoli`,
-      xStTime: (act, s, e) => `Ish vaqti: ${act} · ${s} dan ${e} gacha`,
       xS1: 'BO\'LIM 1. KAMOMAD (OMBORDA YO\'Q BUYURTMALAR)',
       xS2: 'BO\'LIM 2. NOTO\'G\'RI JAVONDAGI BUYURTMALAR (OMBORDA, LEKIN BOSHQA JAVONDA)',
       xS3: 'BO\'LIM 3. QABULDAGI MAHSULOTLAR (TO\'LIQ QABUL QILINMAGAN — OMBORGA YUBORMANG!)',
@@ -615,21 +577,6 @@
 
   function $(id) { return document.getElementById(id); }
 
-  const pad2 = n => String(n).padStart(2, '0');
-
-  // ms -> HH:MM:SS
-  function fmtDur(ms) {
-    const s = Math.floor(Math.max(0, ms || 0) / 1000);
-    return `${pad2(Math.floor(s / 3600))}:${pad2(Math.floor((s % 3600) / 60))}:${pad2(s % 60)}`;
-  }
-
-  // ms -> HH:MM (soat:daqiqa)
-  function fmtClock(ms) {
-    if (!ms) return '—';
-    const d = new Date(ms);
-    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-  }
-
   function normOrderId(o) {
     const v = o?.b2cOrderId ?? o?.orderId ?? o?.id;
     return v == null ? '' : String(v);
@@ -748,10 +695,6 @@
 
   function plainFound(list) {
     return list && list.length ? list.map(f => `${f.cell} (${f.qty})`).join(', ') : t('notFoundShort');
-  }
-
-  function safeCustomerName(c) {
-    return escHtml(c?.firstName || '');
   }
 
   // ---------------------------------------------------------------- token
@@ -876,7 +819,7 @@
     return { 'accept': 'application/json', 'authorization': `Bearer ${token}` };
   }
 
-  // ---------------------------------------------------------------- sahifa sarlavhasi (PVZ va ID)
+  // ---------------------------------------------------------------- sahifa sarlavhasi (PVZ)
   function insideOurUi(el) {
     return !!(el.closest && (el.closest('#uzum-inv-modal') || el.closest('#uzum-inv-btn')));
   }
@@ -948,118 +891,16 @@
     return null;
   }
 
-  // Sahifadagi "К выдаче N" sonini qat'iy o'qiydi (aniq topilmasa null)
-  function readIssueCountStrict() {
+  function detectOrdersCount() {
     const all = Array.from(document.querySelectorAll('*'));
     for (const el of all) {
       if (insideOurUi(el)) continue;
-      if (el.children.length > 2) continue;
-      const m = (el.textContent || '').match(/К выдаче\s*(\d+)/i);
-      if (m) return Number(m[1]);
+      if (el.children.length <= 2 && el.textContent && el.textContent.includes('К выдаче')) {
+        const m = el.textContent.match(/К выдаче\s*(\d+)/i) || el.textContent.match(/(\d+)/);
+        if (m && m[1]) return m[1];
+      }
     }
-    return null;
-  }
-
-  function detectOrdersCount() {
-    const c = readIssueCountStrict();
-    return c == null ? '—' : String(c);
-  }
-
-  // ---------------------------------------------------------------- dpKey tekshiruvi
-  // Yuklashdan oldin ID WMS'da tekshiriladi. Xato bo'lsa, qoldiqlar yuklanmaydi.
-  async function validateDpKey(dpKey) {
-    if (!dpKey) throw new Error(t('dpEmpty'));
-    if (!DPKEY_RE.test(dpKey)) throw new Error(t('dpFormat'));
-
-    const headers = authHeaders();
-    let data;
-    try {
-      data = await fetchJson(
-        `${API_V3}/orders?page=0&size=1&status=DELIVERED%2CTEMP_DELIVERED&deliveryPointKey=${encodeURIComponent(dpKey)}&sortField=accepted_date&direction=ASC`,
-        headers, 15000, 1
-      );
-    } catch (e) {
-      if (e && e.isAccessError) throw e;
-      throw new Error(`${t('dpInvalid', dpKey)}\n${e && e.message ? e.message : ''}`.trim());
-    }
-
-    const isList = Array.isArray(data) || (data && Array.isArray(data.content));
-    if (!isList) throw new Error(t('dpInvalid', dpKey));
-
-    const total = !Array.isArray(data) && typeof data.totalElements === 'number' ? data.totalElements : null;
-    return { total };
-  }
-
-  // ---------------------------------------------------------------- ish vaqti
-  // Faol vaqt: ketma-ket harakatlar orasidagi vaqt hisoblanadi. Tanaffus
-  // IDLE_LIMIT_MS dan uzoq bo'lsa, faqat shu chegarasi hisobga olinadi.
-  const timing = { startedAt: 0, endedAt: 0, activeMs: 0, lastActivityAt: 0, running: false };
-
-  function resetTiming() {
-    timing.startedAt = 0;
-    timing.endedAt = 0;
-    timing.activeMs = 0;
-    timing.lastActivityAt = 0;
-    timing.running = false;
-  }
-
-  function startTiming() {
-    const now = Date.now();
-    timing.startedAt = now;
-    timing.endedAt = 0;
-    timing.activeMs = 0;
-    timing.lastActivityAt = now;
-    timing.running = true;
-  }
-
-  function markActivity() {
-    if (!timing.running) return;
-    const now = Date.now();
-    timing.activeMs += Math.min(Math.max(0, now - timing.lastActivityAt), IDLE_LIMIT_MS);
-    timing.lastActivityAt = now;
-  }
-
-  function finishTiming() {
-    if (!timing.running) return;
-    const now = Date.now();
-    timing.activeMs += Math.min(Math.max(0, now - timing.lastActivityAt), IDLE_LIMIT_MS);
-    timing.lastActivityAt = now;
-    timing.endedAt = now;
-    timing.running = false;
-  }
-
-  function timingSnapshot() {
-    const now = Date.now();
-    const endedAt = timing.running ? now : timing.endedAt;
-    const tail = timing.running ? Math.min(Math.max(0, now - timing.lastActivityAt), IDLE_LIMIT_MS) : 0;
-    return {
-      startedAt: timing.startedAt,
-      endedAt,
-      totalMs: timing.startedAt && endedAt ? Math.max(0, endedAt - timing.startedAt) : 0,
-      activeMs: timing.activeMs + tail
-    };
-  }
-
-  function timeMetaHtml(scanned) {
-    const tm = timingSnapshot();
-    const hrs = tm.activeMs / 3600000;
-    const speed = tm.activeMs >= 60000 && scanned > 0 ? t('speedVal', Math.round(scanned / hrs)) : t('speedNA');
-    const items = [
-      [t('timeStart'), fmtClock(tm.startedAt)],
-      [t('timeTotal'), fmtDur(tm.totalMs)],
-      [t('timeActive'), fmtDur(tm.activeMs)],
-      [t('timeSpeed'), speed]
-    ];
-    return items.map(([k, v]) => `<span class="uz-chip">${escHtml(k)} <b>${escHtml(v)}</b></span>`).join('');
-  }
-
-  function updateTimerUI() {
-    const a = $('u-timer');
-    if (!a) return;
-    const tm = timingSnapshot();
-    a.textContent = fmtDur(tm.activeMs);
-    const tot = $('u-timer-total');
-    if (tot) tot.textContent = `${t('timeTotal')}: ${fmtDur(tm.totalMs)}`;
+    return '—';
   }
 
   // ---------------------------------------------------------------- sound
@@ -1653,7 +1494,6 @@
   // ---------------------------------------------------------------- telegram (fon)
   function buildTelegramText(entry) {
     const s = entry.stats || {};
-    const tm = entry.timing || { totalMs: 0, activeMs: 0 };
     return [
       t('tgTitle'),
       t('tgPvz', entry.pvzName, entry.dpKey),
@@ -1663,7 +1503,6 @@
       t('tgOrders', s.totalOrders ?? 0),
       t('tgPlan', s.totalPlanUnits ?? 0),
       t('tgFact', s.totalScanned ?? 0),
-      t('tgTime', fmtDur(tm.totalMs), fmtDur(tm.activeMs)),
       '',
       t('tgShort', s.shortageCount ?? 0, s.shortageUnits ?? 0),
       t('tgMis', s.mismatchCount ?? 0, s.mismatchUnits ?? 0),
@@ -1873,9 +1712,6 @@
     const partners = report.partnerOrders || [];
     const partnerIssues = partners.filter(p => p.status !== 'OK');
 
-    // Vaqt: tarixdan olinsa o'sha yozuv, joriy ko'rinishda hozirgi sessiya
-    const tm = auditMeta ? (auditMeta.timing || null) : (timing.startedAt ? timingSnapshot() : null);
-
     const rows = [];
     rows.push([t('xTitle')]);
     rows.push([t('xPvz'), `${pvzName} (ID: ${dpKey})`, '', t('xDate'), `${dateStr} ${timeStr}`]);
@@ -1894,11 +1730,6 @@
     rows.push([t('xSumRet'), report.canceledReturns.length, t('xStRet', report.totalReturnUnits)]);
     rows.push([t('xSumSur'), report.pureSurplus.length, t('xStSur', report.totalSurplusUnits)]);
     rows.push([t('xSumPartner'), partnerIssues.length, t('xStPartner', report.totalPartnerUnits || 0)]);
-    rows.push([
-      t('xSumTime'),
-      tm ? fmtDur(tm.totalMs) : t('noName'),
-      tm ? t('xStTime', fmtDur(tm.activeMs), fmtClock(tm.startedAt), fmtClock(tm.endedAt)) : t('noName')
-    ]);
     rows.push([]);
 
     rows.push([t('xS1')]);
@@ -2010,7 +1841,6 @@
     const report = buildReport();
     const now = new Date();
     const partnerIssues = report.partnerOrders.filter(p => p.status !== 'OK');
-    const tm = timingSnapshot();
 
     const auditEntry = {
       id: `INV-${Date.now()}`,
@@ -2019,12 +1849,6 @@
       pvzName: state.activePvzName,
       dpKey: state.dpKey,
       auditor: getAuditorName(),
-      timing: {
-        startedAt: tm.startedAt,
-        endedAt: tm.endedAt,
-        totalMs: tm.totalMs,
-        activeMs: tm.activeMs
-      },
       stats: {
         totalOrders: state.totalOrdersCount,
         totalPlanUnits: state.totalPlanUnits,
@@ -2050,10 +1874,9 @@
     while (list.length > HISTORY_LIMIT) list.pop();
     const saved = writeHistory(list);
 
-    // Telegram va vaqt tugashi faqat muvaffaqiyatli saqlangandan keyin
+    // Telegram faqat muvaffaqiyatli saqlangandan keyin yuboriladi
     if (saved) {
       state.savedInSession = true;
-      finishTiming();
       sendTelegramSilently(buildTelegramText(auditEntry)).then(ok => {
         if (!ok) console.warn('[uzum-inv] telegram: xabar yuborilmadi');
       });
@@ -2068,8 +1891,7 @@
       auditor: auditEntry.auditor,
       totalOrders: auditEntry.stats.totalOrders,
       totalPlanUnits: auditEntry.stats.totalPlanUnits,
-      totalScanned: auditEntry.stats.totalScanned,
-      timing: auditEntry.timing
+      totalScanned: auditEntry.stats.totalScanned
     });
     alert(saved ? t('savedOk', state.activePvzName) : t('saveFail'));
     renderHeadActions('report');
@@ -2157,7 +1979,6 @@
 #uzum-inv-modal .uz-issue{margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-radius:14px;background:var(--surface-2);border:1px dashed var(--line-2)}
 #uzum-inv-modal .uz-issue b{font-size:20px;font-weight:900;color:var(--primary)}
 #uzum-inv-modal .uz-note{margin-top:8px;font-size:12px;color:var(--muted)}
-#uzum-inv-modal .uz-dpst{margin-top:14px;padding:10px 14px;border-radius:12px;font-weight:700;font-size:13px;text-align:left;color:var(--c,var(--muted));background:var(--cs,var(--surface-2));border:1px solid color-mix(in srgb,var(--c,var(--muted)) 30%,transparent);border-left:4px solid var(--c,var(--muted))}
 #uzum-inv-modal .uz-prog{min-height:20px;margin-top:12px;text-align:center;font-size:13px;font-weight:700;color:var(--primary)}
 
 #uzum-inv-modal .uz-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) 112px;gap:12px;margin-bottom:12px}
@@ -2173,10 +1994,7 @@
 #uzum-inv-modal .uz-ring-t{position:absolute;inset:0;display:grid;place-items:center;font-weight:900;font-size:15px;font-variant-numeric:tabular-nums}
 #uzum-inv-modal .uz-meter{height:8px;border-radius:999px;background:var(--surface-3);overflow:hidden}
 #uzum-inv-modal .uz-meter>div{height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,var(--primary-2),var(--primary));transition:width .35s ease}
-#uzum-inv-modal .uz-barrow{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px 14px;margin:8px 2px 16px}
-#uzum-inv-modal .uz-barlbl{font-size:12px;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums}
-#uzum-inv-modal .uz-timer{display:inline-flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;font-weight:700;color:var(--muted)}
-#uzum-inv-modal .uz-timer b{font-size:18px;font-weight:900;color:var(--primary);font-variant-numeric:tabular-nums}
+#uzum-inv-modal .uz-barlbl{margin:8px 2px 16px;font-size:12px;font-weight:700;color:var(--muted);font-variant-numeric:tabular-nums}
 
 #uzum-inv-modal .uz-work{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:12px;margin-bottom:14px}
 #uzum-inv-modal .uz-cellcard{display:flex;flex-direction:column;justify-content:center;min-height:150px;border-radius:18px;padding:18px 20px;color:#fff;background:linear-gradient(150deg,#8b5cf6 0%,#5b21b6 100%);box-shadow:0 14px 30px rgba(91,33,182,.3);min-width:0}
@@ -2214,9 +2032,9 @@
 #uzum-inv-modal .uz-tile .u{margin-top:4px;font-size:12px;font-weight:800;color:var(--c,var(--muted));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #uzum-inv-modal .uz-meta{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
 #uzum-inv-modal .uz-chip{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:999px;background:var(--surface);border:1px solid var(--line);font-size:12.5px;font-weight:700;color:var(--muted)}
-#uzum-inv-modal .uz-chip b{color:var(--text);font-weight:900;font-variant-numeric:tabular-nums}
+#uzum-inv-modal .uz-chip b{color:var(--text);font-weight:900}
 
-#uzum-inv-modal .uz-sec{background:var(--surface);border:1px solid var(--line);border-radius:18px;overflow:hidden;margin-bottom:14px}
+#uzum-inv-modal .uz-sec{--c:var(--mut);background:var(--surface);border:1px solid var(--line);border-radius:18px;overflow:hidden;margin-bottom:14px}
 #uzum-inv-modal .uz-sec-h{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:13px 18px;border-bottom:1px solid var(--line);background:var(--cs,transparent)}
 #uzum-inv-modal .uz-sec-t{display:flex;align-items:center;gap:10px;font-weight:800;font-size:14px;color:var(--c,var(--text))}
 #uzum-inv-modal .uz-sec-t::before{content:"";width:10px;height:10px;border-radius:4px;background:var(--c,var(--muted))}
@@ -2301,14 +2119,6 @@
     return `<div class="uz-tw"><table class="uz-tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
   }
 
-  function setDpStatus(kind, text) {
-    const el = $('u-dp-status');
-    if (!el) return;
-    const cls = { idle: 's-mut', busy: 's-search', ok: 's-ok', bad: 's-bad' }[kind] || 's-mut';
-    el.className = 'uz-dpst ' + cls;
-    el.textContent = text;
-  }
-
   function isModalOpen() {
     const m = $('uzum-inv-modal');
     return !!m && m.style.display === 'flex';
@@ -2355,7 +2165,6 @@
     set('u-lbl-last', t('lastBarcode'));
     set('u-undo-btn', t('undo'));
     set('u-lbl-cell-items', t('cellItems'));
-    set('u-lbl-timer', t('timerLabel'));
     const close = $('u-close');
     if (close) { close.title = t('close'); close.setAttribute('aria-label', t('close')); }
     const scanInp = $('u-barcode-input');
@@ -2450,7 +2259,7 @@
     Object.entries(orderItems).forEach(([oId, qty]) => {
       const o = state.ordersMap[oId] || {};
       rows.push([
-        `<b>${escHtml(t('orderLabel', o.pid || oId))}</b>${kindBadgeHtml(o)} <span class="uz-muted">${safeCustomerName(o.customer)}</span>`,
+        `<b>${escHtml(t('orderLabel', o.pid || oId))}</b>${kindBadgeHtml(o)} <span class="uz-muted">${escHtml(o.customer?.firstName || '')}</span>`,
         `<span class="r uz-c s-ok">${escHtml(t('pcs', qty))}</span>`
       ]);
     });
@@ -2507,7 +2316,6 @@
     hint.textContent = hintText || (state.activeCell ? t('hintScanItems') : t('hintNeedCell'));
 
     renderCellItems();
-    updateTimerUI();
   }
 
   // ---------------------------------------------------------------- report screen
@@ -2535,7 +2343,6 @@
       <span class="uz-chip">${escHtml(t('metaPlan'))} <b>${escHtml(t('pcs', state.totalPlanUnits))}</b></span>
       <span class="uz-chip">${escHtml(t('metaScanned'))} <b>${escHtml(t('pcs', state.totalScannedUnits))}</b></span>
       <span class="uz-chip">${escHtml(t('issuesPill', issuesTotal))}</span>
-      ${timeMetaHtml(state.totalScannedUnits)}
     </div>`;
 
     const sec = (cls, title, cnt, units, body) => `
@@ -2553,7 +2360,7 @@
         pidHtml(r),
         `<span class="r uz-c s-bad">-${escHtml(t('pcs', r.missingCount))}</span>`,
         escHtml(cellLabel(r.expectedCell)),
-        `${safeCustomerName(r.customer)} <span class="uz-muted">${escHtml(r.customer?.phone || '')}</span>`
+        `${escHtml(r.customer?.firstName || '')} <span class="uz-muted">${escHtml(r.customer?.phone || '')}</span>`
       ])));
 
     html += sec('s-warn', t('secMis'), report.mismatchedCells.length, t('pcs', report.totalMismatchUnits),
@@ -2598,7 +2405,7 @@
         `<span class="uz-st ${statusCls(p.status)}">${escHtml(statusText(p.status))}</span>`,
         `<span class="uz-mono">${p.planQty} / ${p.factQty}</span>`,
         escHtml(plainFound(p.found)),
-        `${safeCustomerName(p.customer)} <span class="uz-muted">${escHtml(p.customer?.phone || '')}</span>`,
+        `${escHtml(p.customer?.firstName || '')} <span class="uz-muted">${escHtml(p.customer?.phone || '')}</span>`,
         escHtml(partnerAction(p.status))
       ])));
 
@@ -2626,12 +2433,10 @@
 
     box.innerHTML = items.map(item => {
       const s = item.stats || {};
-      const tm = item.timing;
       const chips = [
         `<span class="uz-tc">${escHtml(t('chipOrders', s.totalOrders ?? 0))}</span>`,
         `<span class="uz-tc">${escHtml(t('chipPlan', s.totalPlanUnits ?? 0))}</span>`,
         `<span class="uz-tc">${escHtml(t('chipFact', s.totalScanned ?? 0))}</span>`,
-        tm ? `<span class="uz-tc s-info">${escHtml(t('chipTime', fmtDur(tm.totalMs || 0), fmtDur(tm.activeMs || 0)))}</span>` : '',
         `<span class="uz-tc s-bad">${escHtml(t('chipShort', s.shortageCount ?? 0))}</span>`,
         `<span class="uz-tc s-warn">${escHtml(t('chipMis', s.mismatchCount ?? 0))}</span>`,
         `<span class="uz-tc s-acc">${escHtml(t('chipAcc', s.acceptanceCount ?? 0))}</span>`,
@@ -2664,8 +2469,7 @@
           auditor: found.auditor,
           totalOrders: found.stats?.totalOrders,
           totalPlanUnits: found.stats?.totalPlanUnits,
-          totalScanned: found.stats?.totalScanned,
-          timing: found.timing || null
+          totalScanned: found.stats?.totalScanned
         });
       };
     });
@@ -2684,64 +2488,41 @@
   function fillSetup() {
     const detectedName = detectPvzNameFromHeader();
     const liveDpKey = detectLiveDpKey();
+    const ordersCount = detectOrdersCount();
     if (detectedName && detectedName !== 'ПВЗ') state.activePvzName = detectedName;
     if (liveDpKey) state.dpKey = liveDpKey;
     $('u-pvz-name-input').value = state.activePvzName;
     $('u-pvz-dpkey-input').value = state.dpKey || '';
-    $('u-issue-count').textContent = detectOrdersCount();
-    if (state.dpKey) setDpStatus('idle', t('dpNotChecked'));
-    else setDpStatus('bad', t('dpEmpty'));
+    $('u-issue-count').textContent = ordersCount;
   }
 
   function restartRevision() {
     if (state.totalScannedUnits > 0 && !state.savedInSession && !confirm(t('restartConfirm'))) return;
     resetInventoryState();
-    resetTiming();
     state.workScreen = 'start';
     fillSetup();
     showScreen('start');
   }
 
-  // Tugma bosilganda: avval ID WMS'da tekshiriladi, keyin yuklash boshlanadi
   async function onLoadClick() {
     if (state.loading) return;
     const btn = $('u-load-btn');
     const prog = $('u-progress');
-    const pvzName = $('u-pvz-name-input').value.trim();
-    const dpKey = $('u-pvz-dpkey-input').value.trim();
 
-    if (state.totalScannedUnits > 0 && !state.savedInSession && !confirm(t('restartConfirm'))) return;
+    if (state.totalOrdersCount > 0 && state.totalScannedUnits > 0 && !state.savedInSession && !confirm(t('restartConfirm'))) return;
+
+    state.activePvzName = $('u-pvz-name-input').value.trim() || state.activePvzName;
+    state.dpKey = $('u-pvz-dpkey-input').value.trim() || state.dpKey;
 
     state.loading = true;
     btn.disabled = true;
     btn.textContent = t('loadingBtn');
-    prog.textContent = t('dpChecking');
-    setDpStatus('busy', t('dpChecking'));
-
     try {
-      const check = await validateDpKey(dpKey);
-
-      // Sahifadagi "К выдаче" soni bilan solishtirish (agar WMS jami sonini bersa)
-      const pageCount = readIssueCountStrict();
-      if (check.total != null && pageCount != null && check.total !== pageCount) {
-        if (!confirm(t('dpMismatch', pageCount, check.total))) {
-          setDpStatus('idle', t('dpNotChecked'));
-          prog.textContent = '';
-          return;
-        }
-      }
-
-      setDpStatus('ok', t('dpOk', dpKey));
-      state.activePvzName = pvzName || state.activePvzName;
-      state.dpKey = dpKey;
-
       await loadInventoryData(msg => { prog.textContent = msg; });
-      startTiming();
       prog.textContent = '';
       showScreen('scan');
     } catch (err) {
       prog.textContent = '';
-      setDpStatus('bad', err.message);
       alert(err.message);
     } finally {
       state.loading = false;
@@ -2828,7 +2609,6 @@
                   <b id="u-issue-count">—</b>
                 </div>
                 <div class="uz-note" id="u-ordersnote"></div>
-                <div id="u-dp-status" class="uz-dpst s-mut"></div>
                 <div style="margin-top:18px"><button type="button" id="u-load-btn" class="uz-btn pri big"></button></div>
                 <div id="u-progress" class="uz-prog"></div>
               </div>
@@ -2847,14 +2627,7 @@
                 </div>
               </div>
               <div class="uz-meter"><div id="u-bar-fill"></div></div>
-              <div class="uz-barrow">
-                <span class="uz-barlbl" id="u-bar-label"></span>
-                <span class="uz-timer">
-                  <span id="u-lbl-timer"></span>
-                  <b id="u-timer">00:00:00</b>
-                  <span id="u-timer-total"></span>
-                </span>
-              </div>
+              <div class="uz-barlbl" id="u-bar-label"></div>
 
               <div class="uz-work">
                 <div class="uz-cellcard">
@@ -2889,21 +2662,12 @@
     `;
     document.body.appendChild(modal);
 
-    // Faollikni kuzatish: ish vaqti shu hodisalar orqali hisoblanadi
-    modal.addEventListener('keydown', () => markActivity(), true);
-    modal.addEventListener('pointerdown', () => markActivity(), true);
-
     $('u-close').onclick = closeModal;
     $('u-tab-new').onclick = () => showScreen(state.workScreen || 'start');
     $('u-tab-history').onclick = () => showScreen('history');
     $('u-hist-search').oninput = e => renderHistoryScreen(e.target.value);
     $('u-load-btn').onclick = onLoadClick;
     $('u-undo-btn').onclick = () => { undoLastScan(); focusScanInput(); };
-
-    $('u-pvz-dpkey-input').addEventListener('input', e => {
-      if (e.target.value.trim()) setDpStatus('idle', t('dpNotChecked'));
-      else setDpStatus('bad', t('dpEmpty'));
-    });
 
     const scanInp = $('u-barcode-input');
     scanInp.addEventListener('keydown', e => {
@@ -2992,10 +2756,6 @@
     if (btn.textContent !== label) btn.textContent = label;
   }
 
-  function closeOnEscape(e) {
-    if (e.key === 'Escape' && isModalOpen()) closeModal();
-  }
-
   // ---------------------------------------------------------------- boot
   window.__uzumState = state;
   refreshLocale(true);
@@ -3006,13 +2766,12 @@
 
   window.addEventListener('resize', positionButton);
   window.addEventListener('scroll', positionButton, true);
-  document.addEventListener('keydown', closeOnEscape);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && isModalOpen()) closeModal();
+  });
   setInterval(() => {
     refreshLocale();
     ensureButton();
     positionButton();
   }, 400);
-  setInterval(() => {
-    if (isModalOpen() && state.screen === 'scan') updateTimerUI();
-  }, 1000);
 })();
