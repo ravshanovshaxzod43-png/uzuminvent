@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uzum Ревизор ПВЗ
 // @namespace    https://dp.uzum.uz/
-// @version      1.6.0
+// @version      1.7.0
 // @description  Ревизия склада ПВЗ Uzum Market: потоварная инвентаризация, приёмка, возвраты, пересорт, история и Excel-акт
 // @author       Хожиев Сухроб
 // @match        https://dp.uzum.uz/*
@@ -16,7 +16,7 @@
   if (window.__uzumInvLoaded) return;
   window.__uzumInvLoaded = true;
 
-  const VERSION = '1.6.0';
+  const VERSION = '1.7.0';
   const API = 'https://api-wms.uzum.uz/de/delivery-point';
   const API_V3 = 'https://api-wms.uzum.uz/de/v3/delivery-point';
   const HISTORY_KEY = 'uzum_inventory_history';
@@ -1756,105 +1756,165 @@
 
   // ---------------------------------------------------------------- UI
   const CSS = `
-#uzum-inv-btn{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 16px;margin-right:12px;background:linear-gradient(135deg,#14b8a6,#0f766e);color:#fff;font:700 13px/1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;border:0;border-radius:10px;cursor:pointer;box-shadow:0 4px 14px rgba(20,184,166,.35);white-space:nowrap;transition:transform .15s,box-shadow .15s;vertical-align:middle;outline:none}
-#uzum-inv-btn:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(20,184,166,.45)}
-#uzum-inv-btn.uz-fixed{position:fixed;top:12px;right:400px;z-index:999999;margin:0}
-#uzum-inv-modal{--bg:#0b1220;--panel:#111a2e;--card:#162240;--line:#24324f;--tx:#e6edf7;--muted:#8b9bb8;--teal:#2dd4bf;--tealD:#0f766e;--ok:#22c55e;--bad:#f43f5e;--warn:#f59e0b;--acc:#a78bfa;--ret:#fb923c;--info:#60a5fa;--mut:#64748b;display:none;position:fixed;inset:0;background:rgba(2,6,23,.78);backdrop-filter:blur(6px);z-index:1000000;align-items:center;justify-content:center;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--tx);font-size:14px}
+#uzum-inv-btn{position:fixed;top:12px;left:0;z-index:999999;display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 16px;margin:0;background:linear-gradient(135deg,#14b8a6 0%,#0d9488 100%);color:#fff;border:0;border-radius:12px;cursor:pointer;font:700 13px/1 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;letter-spacing:.1px;white-space:nowrap;box-shadow:0 6px 18px rgba(13,148,136,.35),inset 0 1px 0 rgba(255,255,255,.22);transition:transform .15s ease,box-shadow .2s ease,filter .2s ease;outline:none}
+#uzum-inv-btn:hover{transform:translateY(-1px);filter:brightness(1.05);box-shadow:0 10px 24px rgba(13,148,136,.45),inset 0 1px 0 rgba(255,255,255,.22)}
+#uzum-inv-btn:active{transform:translateY(0)}
+#uzum-inv-btn:focus-visible{box-shadow:0 0 0 3px rgba(45,212,191,.45)}
+#uzum-inv-modal{--bg:#0a0f1d;--surface:#111a2d;--surface-2:#162138;--surface-3:#1d2a45;--border:rgba(148,163,184,.14);--border-strong:rgba(148,163,184,.28);--text:#e7edf8;--muted:#8d9cb6;--primary:#2dd4bf;--primary-strong:#0d9488;--primary-ink:#042f2e;--ok:#22c55e;--bad:#f43f5e;--warn:#f59e0b;--acc:#a78bfa;--ret:#fb923c;--info:#60a5fa;--mut:#94a3b8;--shadow:0 30px 80px rgba(0,0,0,.6);display:none;position:fixed;inset:0;z-index:1000000;align-items:center;justify-content:center;padding:16px;background:rgba(2,6,23,.66);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;color:var(--text);font-size:14px;line-height:1.45}
+@media (prefers-color-scheme:light){#uzum-inv-modal{--bg:#f2f5fb;--surface:#ffffff;--surface-2:#f6f8fc;--surface-3:#e6edf6;--border:#e3e9f2;--border-strong:#cbd5e1;--text:#0f172a;--muted:#64748b;--primary:#0d9488;--primary-strong:#0f766e;--primary-ink:#ffffff;--ok:#16a34a;--bad:#e11d48;--warn:#d97706;--acc:#7c3aed;--ret:#ea580c;--info:#2563eb;--mut:#64748b;--shadow:0 30px 70px rgba(15,23,42,.22)}}
 #uzum-inv-modal *{box-sizing:border-box}
-#uzum-inv-modal .rv-shell{width:1000px;max-width:96vw;height:92vh;background:var(--bg);border:1px solid var(--line);border-radius:16px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.6)}
-#uzum-inv-modal .rv-top{display:flex;align-items:center;gap:14px;padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
-#uzum-inv-modal .rv-logo{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,var(--teal),var(--tealD));color:#042f2e;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:18px}
-#uzum-inv-modal .rv-title{font-size:16px;font-weight:800}
-#uzum-inv-modal .rv-sub{font-size:11.5px;color:var(--muted);margin-top:2px}
-#uzum-inv-modal .rv-ver{margin-left:auto;font-size:11px;font-weight:700;color:var(--teal);border:1px solid var(--tealD);padding:3px 9px;border-radius:999px}
-#uzum-inv-modal .rv-x{background:transparent;border:1px solid var(--line);color:var(--muted);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:14px}
-#uzum-inv-modal .rv-x:hover{color:var(--tx);border-color:var(--muted)}
-#uzum-inv-modal .rv-nav{display:flex;gap:6px;padding:10px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
-#uzum-inv-modal .rv-navbtn{padding:8px 14px;border:0;background:transparent;color:var(--muted);font-weight:700;font-size:13px;border-radius:8px;cursor:pointer}
-#uzum-inv-modal .rv-navbtn:hover{color:var(--tx)}
-#uzum-inv-modal .rv-navbtn.active{background:var(--card);color:var(--teal)}
-#uzum-inv-modal .rv-body{padding:20px;flex:1;overflow-y:auto}
-#uzum-inv-modal .rv-panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
-#uzum-inv-modal .rv-label{font-size:10.5px;font-weight:800;color:var(--muted);letter-spacing:.8px;text-transform:uppercase}
+#uzum-inv-modal button,#uzum-inv-modal input{font-family:inherit}
+
+#uzum-inv-modal .rv-shell{width:min(1080px,100%);height:min(92vh,940px);max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);display:flex;flex-direction:column;overflow:hidden;background:var(--bg);border:1px solid var(--border);border-radius:20px;box-shadow:var(--shadow)}
+
+#uzum-inv-modal .rv-top{display:flex;align-items:center;gap:12px;padding:14px 20px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
+#uzum-inv-modal .rv-logo{width:40px;height:40px;flex-shrink:0;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,var(--primary),var(--primary-strong));color:var(--primary-ink);font-weight:900;font-size:18px;box-shadow:0 8px 20px color-mix(in srgb,var(--primary) 30%,transparent)}
+#uzum-inv-modal .rv-brand{flex:1;min-width:0}
+#uzum-inv-modal .rv-title{font-size:16px;font-weight:800;letter-spacing:-.1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#uzum-inv-modal .rv-sub{font-size:12px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#uzum-inv-modal .rv-ver{flex-shrink:0;font-size:11px;font-weight:700;color:var(--primary);background:color-mix(in srgb,var(--primary) 12%,transparent);padding:4px 10px;border-radius:999px;white-space:nowrap}
+#uzum-inv-modal .rv-x{flex-shrink:0;width:34px;height:34px;display:grid;place-items:center;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);color:var(--muted);cursor:pointer;font-size:13px;transition:all .15s ease}
+#uzum-inv-modal .rv-x:hover{color:var(--text);border-color:var(--border-strong)}
+
+#uzum-inv-modal .rv-nav{padding:12px 20px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
+#uzum-inv-modal .rv-seg{display:inline-flex;max-width:100%;gap:4px;padding:4px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px}
+#uzum-inv-modal .rv-navbtn{padding:8px 16px;border:0;background:transparent;color:var(--muted);font-weight:700;font-size:13px;border-radius:9px;cursor:pointer;transition:all .15s ease;white-space:nowrap}
+#uzum-inv-modal .rv-navbtn:hover{color:var(--text)}
+#uzum-inv-modal .rv-navbtn.active{background:var(--surface-3);color:var(--primary);box-shadow:0 1px 3px rgba(0,0,0,.2)}
+
+#uzum-inv-modal .rv-body{flex:1;min-height:0;overflow-y:auto;padding:20px;-webkit-overflow-scrolling:touch}
+#uzum-inv-modal .rv-panel{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px 20px;min-width:0}
+#uzum-inv-modal .rv-label{font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.6px;text-transform:uppercase}
 #uzum-inv-modal .rv-muted{color:var(--muted);font-size:12px}
-#uzum-inv-modal .rv-btn{display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border:1px solid var(--line);background:var(--card);color:var(--tx);font-weight:700;font-size:13px;border-radius:9px;cursor:pointer;transition:all .15s}
-#uzum-inv-modal .rv-btn:hover{border-color:var(--teal);color:var(--teal)}
-#uzum-inv-modal .rv-btn.teal{background:linear-gradient(135deg,var(--teal),var(--tealD));color:#042f2e;border-color:transparent}
-#uzum-inv-modal .rv-btn.teal:hover{filter:brightness(1.1);color:#042f2e}
-#uzum-inv-modal .rv-btn.green{background:var(--ok);color:#052e16;border-color:transparent}
-#uzum-inv-modal .rv-btn.green:hover{filter:brightness(1.08);color:#052e16}
-#uzum-inv-modal .rv-btn.danger{background:rgba(244,63,94,.12);color:var(--bad);border-color:transparent}
-#uzum-inv-modal .rv-btn.big{padding:14px 40px;font-size:15px;border-radius:12px}
-#uzum-inv-modal .rv-btn:disabled{opacity:.5;cursor:default}
-#uzum-inv-modal .rv-in{padding:10px 12px;border:1px solid var(--line);border-radius:9px;font-size:15px;font-weight:700;text-align:center;outline:none;background:var(--bg);color:var(--tx)}
-#uzum-inv-modal .rv-in:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(45,212,191,.15)}
-#uzum-inv-modal .rv-setup{max-width:540px;margin:30px auto}
-#uzum-inv-modal .rv-setup .rv-panel{padding:26px;text-align:center}
-#uzum-inv-modal .rv-fields{display:flex;gap:14px;justify-content:center;margin:18px 0 12px}
-#uzum-inv-modal .rv-field{display:flex;flex-direction:column;gap:6px;align-items:center}
-#uzum-inv-modal .rv-orders{display:inline-block;font-weight:700;color:var(--teal);background:rgba(45,212,191,.1);padding:6px 14px;border-radius:999px;font-size:12.5px}
-#uzum-inv-modal .rv-prog{margin-top:14px;color:var(--teal);font-weight:600;min-height:20px;font-size:13px}
-#uzum-inv-modal .rv-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px}
-#uzum-inv-modal .rv-kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
-#uzum-inv-modal .rv-kpi b{display:block;font-size:22px;font-weight:800;margin-top:4px}
-#uzum-inv-modal .rv-meter{height:8px;background:var(--line);border-radius:999px;overflow:hidden}
-#uzum-inv-modal .rv-meter>div{height:100%;width:0;background:linear-gradient(90deg,var(--teal),var(--ok));border-radius:999px;transition:width .3s}
-#uzum-inv-modal .rv-meterlbl{font-size:12px;color:var(--muted);margin:6px 0 14px;font-weight:600}
-#uzum-inv-modal .rv-work{display:grid;grid-template-columns:1fr 1.4fr;gap:12px;margin-bottom:12px}
-#uzum-inv-modal .rv-cellbox{display:flex;flex-direction:column;justify-content:center;min-height:150px}
-#uzum-inv-modal .rv-cell{font-size:52px;font-weight:900;color:var(--teal);line-height:1.05;margin-top:8px;word-break:break-all}
-#uzum-inv-modal .rv-cell.empty{font-size:16px;color:var(--muted);font-weight:700}
-#uzum-inv-modal .rv-last{font-size:15px;font-weight:700;margin:6px 0 10px;word-break:break-all;font-family:ui-monospace,Consolas,monospace}
-#uzum-inv-modal .rv-hint{padding:10px 14px;border-radius:10px;font-weight:700;font-size:13px;border-left:4px solid var(--c,var(--muted));background:color-mix(in srgb,var(--c,var(--muted)) 14%,transparent);color:var(--c,var(--muted))}
-#uzum-inv-modal .rv-scanrow{display:flex;gap:10px;margin-bottom:14px}
-#uzum-inv-modal .rv-scanrow input{flex:1;padding:13px 16px;border:1px solid var(--teal);border-radius:11px;font-size:15px;outline:none;background:var(--panel);color:var(--tx)}
-#uzum-inv-modal .rv-scanrow input:focus{box-shadow:0 0 0 3px rgba(45,212,191,.2)}
-#uzum-inv-modal .rv-listhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+#uzum-inv-modal .rv-accent{color:var(--primary)}
+
+#uzum-inv-modal .rv-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:0 16px;border:1px solid var(--border-strong);background:var(--surface-2);color:var(--text);font-weight:600;font-size:13px;border-radius:11px;cursor:pointer;transition:all .15s ease;white-space:nowrap}
+#uzum-inv-modal .rv-btn:hover{border-color:var(--primary);color:var(--primary)}
+#uzum-inv-modal .rv-btn:active{transform:translateY(1px)}
+#uzum-inv-modal .rv-btn:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+#uzum-inv-modal .rv-btn.teal{background:linear-gradient(135deg,var(--primary),var(--primary-strong));color:var(--primary-ink);border-color:transparent;box-shadow:0 8px 20px color-mix(in srgb,var(--primary) 28%,transparent)}
+#uzum-inv-modal .rv-btn.teal:hover{color:var(--primary-ink);filter:brightness(1.06)}
+#uzum-inv-modal .rv-btn.green{background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border-color:transparent}
+#uzum-inv-modal .rv-btn.green:hover{color:#fff;filter:brightness(1.06)}
+#uzum-inv-modal .rv-btn.danger{background:color-mix(in srgb,var(--bad) 12%,transparent);color:var(--bad);border-color:transparent}
+#uzum-inv-modal .rv-btn.danger:hover{background:color-mix(in srgb,var(--bad) 20%,transparent);color:var(--bad)}
+#uzum-inv-modal .rv-btn.big{width:100%;min-height:50px;font-size:15px;border-radius:13px}
+#uzum-inv-modal .rv-btn:disabled{opacity:.5;cursor:default;transform:none}
+
+#uzum-inv-modal .rv-in{width:100%;min-height:44px;padding:10px 14px;border:1px solid var(--border-strong);border-radius:12px;font-size:15px;font-weight:700;text-align:center;outline:none;background:var(--surface-2);color:var(--text);transition:border-color .15s ease,box-shadow .15s ease}
+#uzum-inv-modal .rv-in:focus{border-color:var(--primary);box-shadow:0 0 0 4px color-mix(in srgb,var(--primary) 18%,transparent)}
+
+#uzum-inv-modal .rv-setup{max-width:560px;margin:20px auto}
+#uzum-inv-modal .rv-setup .rv-panel{padding:30px 28px;text-align:center}
+#uzum-inv-modal .rv-hero{width:64px;height:64px;margin:0 auto 14px;border-radius:20px;display:grid;place-items:center;font-size:30px;background:color-mix(in srgb,var(--primary) 16%,transparent);border:1px solid color-mix(in srgb,var(--primary) 30%,transparent)}
+#uzum-inv-modal .rv-h2{margin:0;font-size:17px;font-weight:800;letter-spacing:-.2px}
+#uzum-inv-modal .rv-fields{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:20px 0 14px;text-align:left}
+#uzum-inv-modal .rv-field{display:flex;flex-direction:column;gap:8px;min-width:0}
+#uzum-inv-modal .rv-orders{display:inline-block;font-weight:700;font-size:12.5px;color:var(--primary);background:color-mix(in srgb,var(--primary) 12%,transparent);padding:7px 14px;border-radius:999px}
+#uzum-inv-modal .rv-setup-go{margin-top:22px}
+#uzum-inv-modal .rv-prog{margin-top:14px;color:var(--primary);font-weight:600;min-height:20px;font-size:13px}
+
+#uzum-inv-modal .rv-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:14px}
+#uzum-inv-modal .rv-kpi{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 16px;min-width:0}
+#uzum-inv-modal .rv-kpi b{display:block;margin-top:6px;font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#uzum-inv-modal .rv-progress{margin-bottom:16px}
+#uzum-inv-modal .rv-meter{height:10px;background:var(--surface-3);border-radius:999px;overflow:hidden}
+#uzum-inv-modal .rv-meter>div{height:100%;width:0;background:linear-gradient(90deg,var(--primary),var(--ok));border-radius:999px;transition:width .35s ease}
+#uzum-inv-modal .rv-meterlbl{font-size:12px;color:var(--muted);margin-top:8px;font-weight:600;font-variant-numeric:tabular-nums}
+
+#uzum-inv-modal .rv-work{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:12px;margin-bottom:14px}
+#uzum-inv-modal .rv-cellbox{display:flex;flex-direction:column;justify-content:center;min-height:156px;background:linear-gradient(160deg,var(--surface) 0%,var(--surface-2) 100%)}
+#uzum-inv-modal .rv-cell{margin-top:10px;font-size:clamp(32px,4.6vw,50px);font-weight:900;line-height:1.05;letter-spacing:-.5px;color:var(--primary);word-break:break-all}
+#uzum-inv-modal .rv-cell.empty{font-size:15px;font-weight:700;letter-spacing:0;color:var(--muted)}
+#uzum-inv-modal .rv-last{margin:8px 0 12px;font-size:15px;font-weight:700;font-family:ui-monospace,Consolas,monospace;word-break:break-all}
+#uzum-inv-modal .rv-hint{padding:10px 14px;border-radius:12px;font-weight:600;font-size:13px;color:var(--c,var(--muted));background:var(--cs,transparent);border:1px solid color-mix(in srgb,var(--c,var(--muted)) 28%,transparent);border-left:4px solid var(--c,var(--muted))}
+
+#uzum-inv-modal .rv-scanrow{display:flex;gap:10px;margin-bottom:16px}
+#uzum-inv-modal .rv-scanrow input{flex:1;min-width:0;padding:14px 18px;border:1px solid var(--primary);border-radius:14px;font-size:15px;outline:none;background:var(--surface);color:var(--text);transition:box-shadow .2s ease}
+#uzum-inv-modal .rv-scanrow input:focus{box-shadow:0 0 0 4px color-mix(in srgb,var(--primary) 20%,transparent)}
+#uzum-inv-modal .rv-scanrow .rv-btn{min-height:50px}
+#uzum-inv-modal .rv-listhead{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px}
 #uzum-inv-modal .rv-listhead span{font-weight:800;font-size:13.5px}
-#uzum-inv-modal .rv-list{background:var(--panel);border:1px solid var(--line);border-radius:12px;max-height:240px;overflow-y:auto}
-#uzum-inv-modal .rv-empty{padding:22px;text-align:center;color:var(--muted)}
-#uzum-inv-modal .rv-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
-#uzum-inv-modal .rv-tbl th{text-align:left;padding:9px 12px;background:var(--card);color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;font-weight:800}
-#uzum-inv-modal .rv-tbl td{padding:9px 12px;border-top:1px solid var(--line)}
-#uzum-inv-modal .rv-tbl .rv-r{text-align:right;font-weight:800}
+#uzum-inv-modal .rv-list{max-height:280px;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:14px}
+#uzum-inv-modal .rv-empty{padding:24px;text-align:center;color:var(--muted)}
+
+#uzum-inv-modal .rv-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+#uzum-inv-modal .rv-tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+#uzum-inv-modal .rv-scroll .rv-tbl{min-width:480px}
+#uzum-inv-modal .rv-list .rv-tbl th{position:sticky;top:0;z-index:1}
+#uzum-inv-modal .rv-tbl th{padding:10px 14px;text-align:left;background:var(--surface-2);color:var(--muted);font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;white-space:nowrap}
+#uzum-inv-modal .rv-tbl td{padding:11px 14px;border-top:1px solid var(--border);vertical-align:middle}
+#uzum-inv-modal .rv-tbl tbody tr:hover td{background:var(--surface-2)}
+#uzum-inv-modal .rv-tbl .rv-r{text-align:right;font-weight:800;white-space:nowrap}
 #uzum-inv-modal .rv-tbl .mono{font-family:ui-monospace,Consolas,monospace;font-weight:700}
-#uzum-inv-modal .rv-tbl tr.s-acc td{background:rgba(167,139,250,.06)}
-#uzum-inv-modal .rv-tbl tr.s-ret td{background:rgba(251,146,60,.06)}
-#uzum-inv-modal .rv-tbl tr.s-bad td{background:rgba(244,63,94,.06)}
-#uzum-inv-modal .rv-tag{display:inline-block;font-size:10px;font-weight:800;padding:2px 8px;border-radius:6px;margin-left:6px;color:var(--c);background:color-mix(in srgb,var(--c) 15%,transparent)}
-#uzum-inv-modal .rv-rhead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
-#uzum-inv-modal .rv-rhead h3{margin:0;font-size:18px;font-weight:800}
-#uzum-inv-modal .rv-rmeta{font-size:12.5px;color:var(--muted);margin-top:4px}
+#uzum-inv-modal .rv-tbl tr.s-acc td,#uzum-inv-modal .rv-tbl tr.s-ret td,#uzum-inv-modal .rv-tbl tr.s-bad td{background:var(--cs)}
+#uzum-inv-modal .rv-tbl td[class*="s-"]{color:var(--c)}
+
+#uzum-inv-modal .rv-rhead{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:16px;flex-wrap:wrap}
+#uzum-inv-modal .rv-rhead h3{margin:0;font-size:18px;font-weight:800;letter-spacing:-.2px}
+#uzum-inv-modal .rv-rmeta{font-size:13px;color:var(--muted);margin-top:6px;line-height:1.6}
+#uzum-inv-modal .rv-rmeta b{color:var(--text)}
 #uzum-inv-modal .rv-acts{display:flex;gap:8px;flex-wrap:wrap}
-#uzum-inv-modal .rv-tiles{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}
-#uzum-inv-modal .rv-tile{border-radius:12px;padding:12px 14px;background:color-mix(in srgb,var(--c,var(--mut)) 12%,var(--panel));border:1px solid color-mix(in srgb,var(--c,var(--mut)) 30%,transparent);color:var(--c,var(--muted))}
-#uzum-inv-modal .rv-tile .n{font-size:24px;font-weight:900;line-height:1.1}
-#uzum-inv-modal .rv-tile .t{font-size:11px;font-weight:700;margin-top:3px;color:var(--muted)}
-#uzum-inv-modal .rv-tile .u{font-size:11.5px;font-weight:800;margin-top:4px;color:var(--c,var(--muted))}
-#uzum-inv-modal .rv-sec{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:12px;--c:var(--mut)}
-#uzum-inv-modal .rv-sec-h{display:flex;justify-content:space-between;align-items:center;padding:11px 16px;font-weight:800;font-size:13.5px;color:var(--c);background:color-mix(in srgb,var(--c) 10%,transparent);border-bottom:1px solid var(--line)}
-#uzum-inv-modal .rv-pill{font-size:11.5px;color:var(--muted);background:var(--bg);padding:3px 10px;border-radius:999px}
-#uzum-inv-modal .rv-none{padding:14px 16px;color:var(--muted);font-size:13px}
+#uzum-inv-modal .rv-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
+#uzum-inv-modal .rv-tile{min-width:0;border-radius:14px;padding:14px 16px;background:var(--cs);border:1px solid color-mix(in srgb,var(--c) 30%,transparent);color:var(--c)}
+#uzum-inv-modal .rv-tile .n{font-size:26px;font-weight:900;line-height:1.1;font-variant-numeric:tabular-nums}
+#uzum-inv-modal .rv-tile .t{font-size:12px;font-weight:700;margin-top:4px;color:var(--muted)}
+#uzum-inv-modal .rv-tile .u{font-size:12px;font-weight:800;margin-top:6px;color:var(--c)}
+
+#uzum-inv-modal .rv-sec{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;margin-bottom:12px}
+#uzum-inv-modal .rv-sec-h{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;padding:12px 16px;font-weight:800;font-size:13.5px;color:var(--c,var(--text));background:var(--cs,transparent);border-bottom:1px solid var(--border)}
+#uzum-inv-modal .rv-pill{font-size:12px;font-weight:700;color:var(--muted);background:var(--surface);padding:4px 10px;border-radius:999px;border:1px solid var(--border);white-space:nowrap}
+#uzum-inv-modal .rv-none{padding:16px;color:var(--muted);font-size:13px}
 #uzum-inv-modal .rv-none.ok{color:var(--ok);font-weight:700}
-#uzum-inv-modal .rv-hhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:12px}
+
+#uzum-inv-modal .rv-hhead{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px}
 #uzum-inv-modal .rv-hhead h3{margin:0;font-size:17px;font-weight:800}
-#uzum-inv-modal .rv-hhead input{padding:9px 12px;border:1px solid var(--line);border-radius:9px;width:300px;font-size:13px;outline:none;background:var(--panel);color:var(--tx)}
-#uzum-inv-modal .rv-hhead input:focus{border-color:var(--teal)}
-#uzum-inv-modal .rv-hist{display:flex;justify-content:space-between;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:10px}
-#uzum-inv-modal .rv-hist .h1{font-weight:800;font-size:14.5px}
+#uzum-inv-modal .rv-hhead input{padding:10px 14px;border:1px solid var(--border-strong);border-radius:12px;width:min(320px,100%);font-size:13px;outline:none;background:var(--surface);color:var(--text);transition:border-color .15s ease,box-shadow .15s ease}
+#uzum-inv-modal .rv-hhead input:focus{border-color:var(--primary);box-shadow:0 0 0 4px color-mix(in srgb,var(--primary) 18%,transparent)}
+#uzum-inv-modal .rv-hist{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px 18px;margin-bottom:10px;transition:border-color .15s ease}
+#uzum-inv-modal .rv-hist:hover{border-color:var(--border-strong)}
+#uzum-inv-modal .rv-hist .h1{font-weight:800;font-size:14.5px;min-width:0}
 #uzum-inv-modal .rv-hist .h1 span{color:var(--muted);font-weight:500;font-size:12.5px}
-#uzum-inv-modal .rv-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-#uzum-inv-modal .rv-chip{font-size:11px;font-weight:700;padding:3px 9px;border-radius:6px;color:var(--c,var(--muted));background:color-mix(in srgb,var(--c,var(--mut)) 14%,transparent)}
-#uzum-inv-modal .s-ok{--c:var(--ok)}
-#uzum-inv-modal .s-bad{--c:var(--bad)}
-#uzum-inv-modal .s-warn{--c:var(--warn)}
-#uzum-inv-modal .s-acc{--c:var(--acc)}
-#uzum-inv-modal .s-ret{--c:var(--ret)}
-#uzum-inv-modal .s-info{--c:var(--info)}
-#uzum-inv-modal .s-mut{--c:var(--mut)}
-#uzum-inv-modal .s-search{--c:var(--teal)}
-#uzum-inv-modal .rv-r.s-ok,#uzum-inv-modal .rv-r.s-bad,#uzum-inv-modal .rv-r.s-acc,#uzum-inv-modal .rv-r.s-ret{color:var(--c)}
-@media (max-width:760px){#uzum-inv-modal .rv-tiles{grid-template-columns:repeat(2,1fr)}#uzum-inv-modal .rv-work{grid-template-columns:1fr}#uzum-inv-modal .rv-kpis{grid-template-columns:1fr}}
+#uzum-inv-modal .rv-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+#uzum-inv-modal .rv-chip{font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:8px;color:var(--c,var(--muted));background:var(--cs,color-mix(in srgb,var(--muted) 12%,transparent))}
+#uzum-inv-modal .rv-tag{display:inline-block;font-size:10px;font-weight:800;padding:3px 8px;border-radius:6px;margin-left:6px;letter-spacing:.3px;vertical-align:middle;color:var(--c,var(--muted));background:var(--cs,transparent)}
+
+#uzum-inv-modal .s-ok{--c:var(--ok);--cs:color-mix(in srgb,var(--ok) 14%,transparent)}
+#uzum-inv-modal .s-bad{--c:var(--bad);--cs:color-mix(in srgb,var(--bad) 14%,transparent)}
+#uzum-inv-modal .s-warn{--c:var(--warn);--cs:color-mix(in srgb,var(--warn) 14%,transparent)}
+#uzum-inv-modal .s-acc{--c:var(--acc);--cs:color-mix(in srgb,var(--acc) 14%,transparent)}
+#uzum-inv-modal .s-ret{--c:var(--ret);--cs:color-mix(in srgb,var(--ret) 14%,transparent)}
+#uzum-inv-modal .s-info{--c:var(--info);--cs:color-mix(in srgb,var(--info) 14%,transparent)}
+#uzum-inv-modal .s-mut{--c:var(--mut);--cs:color-mix(in srgb,var(--mut) 14%,transparent)}
+#uzum-inv-modal .s-search{--c:var(--primary);--cs:color-mix(in srgb,var(--primary) 14%,transparent)}
+
+@media (max-width:760px){
+  #uzum-inv-modal{padding:0}
+  #uzum-inv-modal .rv-shell{width:100%;height:100%;max-height:none;border-radius:0;border:0}
+  #uzum-inv-modal .rv-top{padding:12px 14px}
+  #uzum-inv-modal .rv-ver{display:none}
+  #uzum-inv-modal .rv-nav{padding:10px 14px}
+  #uzum-inv-modal .rv-body{padding:14px}
+  #uzum-inv-modal .rv-setup .rv-panel{padding:22px 18px}
+  #uzum-inv-modal .rv-fields{grid-template-columns:1fr}
+  #uzum-inv-modal .rv-kpis{gap:8px}
+  #uzum-inv-modal .rv-kpi{padding:10px 12px}
+  #uzum-inv-modal .rv-kpi b{font-size:17px}
+  #uzum-inv-modal .rv-work{grid-template-columns:1fr}
+  #uzum-inv-modal .rv-scanrow{gap:8px}
+  #uzum-inv-modal .rv-scanrow .rv-btn{padding:0 12px}
+  #uzum-inv-modal .rv-tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  #uzum-inv-modal .rv-tile{padding:12px}
+  #uzum-inv-modal .rv-tile .n{font-size:22px}
+  #uzum-inv-modal .rv-hhead input{width:100%}
+  #uzum-inv-modal .rv-hist{flex-direction:column;align-items:stretch}
+  #uzum-inv-modal .rv-hist .rv-acts,#uzum-inv-modal .rv-rhead .rv-acts{width:100%}
+  #uzum-inv-modal .rv-acts .rv-btn{flex:1 1 auto}
+}
+@media (max-width:420px){
+  #uzum-inv-modal .rv-kpi b{font-size:15px}
+  #uzum-inv-modal .rv-tiles{grid-template-columns:1fr 1fr}
+}
 `;
 
   function ensureStyle() {
@@ -1924,38 +1984,41 @@
     const modal = document.createElement('div');
     modal.id = 'uzum-inv-modal';
     modal.innerHTML = `
-      <div class="rv-shell">
+      <div class="rv-shell" role="dialog" aria-modal="true" aria-labelledby="u-app-name">
         <header class="rv-top">
           <div class="rv-logo">R</div>
-          <div>
+          <div class="rv-brand">
             <div class="rv-title" id="u-app-name"></div>
             <div class="rv-sub" id="u-subtitle"></div>
           </div>
           <span class="rv-ver">v${VERSION}</span>
-          <button id="u-close" class="rv-x"></button>
+          <button id="u-close" class="rv-x" type="button"></button>
         </header>
 
         <nav class="rv-nav">
-          <button id="u-tab-new" class="rv-navbtn active"></button>
-          <button id="u-tab-history" class="rv-navbtn"></button>
+          <div class="rv-seg">
+            <button id="u-tab-new" class="rv-navbtn active" type="button"></button>
+            <button id="u-tab-history" class="rv-navbtn" type="button"></button>
+          </div>
         </nav>
 
         <main class="rv-body">
           <section id="u-start-screen" class="rv-setup">
             <div class="rv-panel">
-              <div class="rv-label" id="u-params-title"></div>
+              <div class="rv-hero" aria-hidden="true">📦</div>
+              <h2 class="rv-h2" id="u-params-title"></h2>
               <div class="rv-fields">
                 <div class="rv-field">
-                  <div class="rv-label" id="u-lbl-pvz"></div>
-                  <input type="text" id="u-pvz-name-input" class="rv-in" style="width:150px">
+                  <label class="rv-label" for="u-pvz-name-input" id="u-lbl-pvz"></label>
+                  <input type="text" id="u-pvz-name-input" class="rv-in">
                 </div>
                 <div class="rv-field">
-                  <div class="rv-label" id="u-lbl-dpkey"></div>
-                  <input type="text" id="u-pvz-dpkey-input" class="rv-in" style="width:130px">
+                  <label class="rv-label" for="u-pvz-dpkey-input" id="u-lbl-dpkey"></label>
+                  <input type="text" id="u-pvz-dpkey-input" class="rv-in">
                 </div>
               </div>
               <div id="u-pvz-display-orders" class="rv-orders"></div>
-              <div style="margin-top:22px"><button id="u-load-btn" class="rv-btn teal big"></button></div>
+              <div class="rv-setup-go"><button id="u-load-btn" class="rv-btn teal big" type="button"></button></div>
               <div id="u-progress" class="rv-prog"></div>
             </div>
           </section>
@@ -1964,10 +2027,12 @@
             <div class="rv-kpis">
               <div class="rv-kpi"><div class="rv-label" id="u-lbl-stat-orders"></div><b id="u-sc-orders">0</b></div>
               <div class="rv-kpi"><div class="rv-label" id="u-lbl-stat-plan"></div><b id="u-sc-plan">0</b></div>
-              <div class="rv-kpi"><div class="rv-label" id="u-lbl-stat-scanned"></div><b id="u-sc-total" style="color:var(--teal)">0</b></div>
+              <div class="rv-kpi"><div class="rv-label" id="u-lbl-stat-scanned"></div><b id="u-sc-total" class="rv-accent">0</b></div>
             </div>
-            <div class="rv-meter"><div id="u-bar-fill"></div></div>
-            <div class="rv-meterlbl" id="u-bar-label"></div>
+            <div class="rv-progress">
+              <div class="rv-meter"><div id="u-bar-fill"></div></div>
+              <div class="rv-meterlbl" id="u-bar-label"></div>
+            </div>
 
             <div class="rv-work">
               <div class="rv-panel rv-cellbox">
@@ -1983,12 +2048,12 @@
 
             <div class="rv-scanrow">
               <input type="text" id="u-barcode-input" autocomplete="off">
-              <button id="u-undo-btn" class="rv-btn"></button>
+              <button id="u-undo-btn" class="rv-btn" type="button"></button>
             </div>
 
             <div class="rv-listhead">
               <span id="u-lbl-cell-items"></span>
-              <button id="u-finish-btn" class="rv-btn green"></button>
+              <button id="u-finish-btn" class="rv-btn green" type="button"></button>
             </div>
             <div id="u-cell-items" class="rv-list"></div>
           </section>
@@ -2067,34 +2132,74 @@
     window.addEventListener('keyup', captureKey, true);
   }
 
-  let btnFallbackTicks = 0;
+  // ---------------------------------------------------------------- button position
+  // Tugma endi Uzum sahifasi DOM'iga emas, body'ga qo'shiladi va
+  // PVZ tanlash maydonining chap tomonida (fixed) turadi. Sayt qayta
+  // render bo'lganda ham joyi o'zgarmaydi.
+  const BTN_GAP = 40;          // tugma va PVZ maydoni orasidagi masofa (px)
+  let anchorEl = null;
+  let anchorSearchAt = 0;
+
+  function getAnchor() {
+    if (anchorEl && anchorEl.isConnected) {
+      const r = anchorEl.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) return anchorEl;
+    }
+    const now = Date.now();
+    if (now - anchorSearchAt < 2000) return null;
+    anchorSearchAt = now;
+    anchorEl = findPvzDropdown();
+    if (anchorEl && anchorEl.getBoundingClientRect().width > 0) return anchorEl;
+    return null;
+  }
+
+  function positionButton() {
+    const btn = $('uzum-inv-btn');
+    if (!btn) return;
+    btn.style.display = '';
+
+    const bw = btn.offsetWidth || 150;
+    const bh = btn.offsetHeight || 38;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const anchor = getAnchor();
+    let left;
+    let top;
+
+    if (anchor) {
+      const r = anchor.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > vh) {          // PVZ maydoni ekrandan tashqarida
+        btn.style.display = 'none';
+        return;
+      }
+      left = r.left - bw - BTN_GAP;
+      top = r.top + (r.height - bh) / 2;
+      if (left < 8) {                             // juda tor ekran: tugmani maydon ostiga
+        left = Math.max(8, Math.min(r.right - bw, vw - bw - 8));
+        top = r.bottom + 8;
+      }
+    } else {
+      left = Math.max(8, vw - 400 - bw);          // PVZ topilmasa: yuqori o'ng burchak
+      top = 12;
+    }
+
+    btn.style.left = Math.round(left) + 'px';
+    btn.style.top = Math.round(top) + 'px';
+  }
+
   function ensureButton() {
     ensureStyle();
     let btn = $('uzum-inv-btn');
     if (!btn) {
       btn = document.createElement('button');
       btn.id = 'uzum-inv-btn';
+      btn.type = 'button';
       btn.onclick = openModal;
+      document.body.appendChild(btn);
     }
     const label = '📦 ' + I18N[LANG === 'uz' ? 'uz' : 'ru'].appName;
     if (btn.textContent !== label) btn.textContent = label;
-
-    if (btn.isConnected && btn.dataset.mode === 'header') return;
-    if (btn.isConnected && btn.dataset.mode === 'fallback') {
-      btnFallbackTicks++;
-      if (btnFallbackTicks % 5 !== 0) return;
-    }
-
-    const dropdown = findPvzDropdown();
-    if (dropdown && dropdown.parentElement) {
-      btn.classList.remove('uz-fixed');
-      btn.dataset.mode = 'header';
-      dropdown.parentElement.insertBefore(btn, dropdown);
-    } else if (!btn.isConnected) {
-      btn.classList.add('uz-fixed');
-      btn.dataset.mode = 'fallback';
-      document.body.appendChild(btn);
-    }
+    positionButton();
   }
 
   function injectUI() {
@@ -2187,7 +2292,7 @@
   }
 
   const rvTable = (heads, rows) =>
-    `<table class="rv-tbl"><thead><tr>${heads.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+    `<div class="rv-scroll"><table class="rv-tbl"><thead><tr>${heads.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
   const rvNone = (txt, ok) => `<div class="rv-none ${ok ? 'ok' : ''}">${txt}</div>`;
   const rvSection = (cls, title, count, units, body) =>
     `<div class="rv-sec ${cls}"><div class="rv-sec-h"><span>${title}</span><span class="rv-pill">${t('pos', count)} · ${units}</span></div>${body}</div>`;
@@ -2212,9 +2317,9 @@
           <div class="rv-rmeta">${t('reportMeta', state.totalOrdersCount, state.totalPlanUnits, state.totalScannedUnits)}</div>
         </div>
         <div class="rv-acts">
-          <button id="u-save-audit-btn" class="rv-btn green">${t('btnSave')}</button>
-          <button id="u-excel-btn" class="rv-btn teal">${t('btnExcel')}</button>
-          <button id="u-resume-btn" class="rv-btn">${t('btnBack')}</button>
+          <button id="u-save-audit-btn" class="rv-btn green" type="button">${t('btnSave')}</button>
+          <button id="u-excel-btn" class="rv-btn teal" type="button">${t('btnExcel')}</button>
+          <button id="u-resume-btn" class="rv-btn" type="button">${t('btnBack')}</button>
         </div>
       </div>
       <div class="rv-tiles">${tiles.map(x => `<div class="rv-tile ${x.cls}"><div class="n">${x.n}</div><div class="t">${x.tt}</div><div class="u">${x.u}</div></div>`).join('')}</div>`;
@@ -2297,8 +2402,8 @@
       const s = item.stats || {};
       html += `
         <div class="rv-hist">
-          <div>
-            <div class="h1">${escHtml(item.pvzName)} <span>· ID ${escHtml(item.dpKey)} · ${escHtml(item.date)} ${escHtml(item.time)}</span></div>
+          <div class="h1">
+            ${escHtml(item.pvzName)} <span>· ID ${escHtml(item.dpKey)} · ${escHtml(item.date)} ${escHtml(item.time)}</span>
             <div class="rv-chips">
               <span class="rv-chip">${escHtml(t('chipOrders', s.totalOrders ?? 0))}</span>
               <span class="rv-chip">${escHtml(t('chipPlan', s.totalPlanUnits ?? 0))}</span>
@@ -2310,8 +2415,8 @@
             </div>
           </div>
           <div class="rv-acts">
-            <button class="rv-btn teal u-download-past-btn" data-id="${escHtml(item.id)}">${t('btnXlsx')}</button>
-            <button class="rv-btn danger u-delete-past-btn" data-id="${escHtml(item.id)}" title="${escHtml(t('deleteTitle'))}">✕</button>
+            <button class="rv-btn teal u-download-past-btn" type="button" data-id="${escHtml(item.id)}">${t('btnXlsx')}</button>
+            <button class="rv-btn danger u-delete-past-btn" type="button" data-id="${escHtml(item.id)}" title="${escHtml(t('deleteTitle'))}">✕</button>
           </div>
         </div>`;
     });
@@ -2349,6 +2454,8 @@
   // ---------------------------------------------------------------- boot
   window.__uzumState = state;
   injectUI();
-
+  window.addEventListener('resize', positionButton);
+  window.addEventListener('scroll', positionButton, true);
   setInterval(injectUI, 2000);
+  setInterval(positionButton, 250);
 })();
