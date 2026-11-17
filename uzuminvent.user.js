@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uzum Ревизор ПВЗ
 // @namespace    https://dp.uzum.uz/
-// @version      1.7.4
+// @version      1.8.1
 // @description  Ревизия склада ПВЗ Uzum Market: проверка ID точки, потоварная инвентаризация, приёмка, возвраты, пересорт, партнёрские заказы (SX/RX), время работы, история и Excel-акт
 // @author       Хожиев Сухроб
 // @match        https://dp.uzum.uz/*
@@ -16,7 +16,7 @@
   if (window.__uzumInvLoaded) return;
   window.__uzumInvLoaded = true;
 
-  const VERSION = '1.7.4';
+  const VERSION = '1.8.1';
   const API = 'https://api-wms.uzum.uz/de/delivery-point';
   const API_V3 = 'https://api-wms.uzum.uz/de/v3/delivery-point';
   const HISTORY_KEY = 'uzum_inventory_history';
@@ -25,25 +25,84 @@
   const BTN_GAP = 40;
   const RING_R = 32;
   const RING_C = 2 * Math.PI * RING_R;
-  const IDLE_LIMIT_MS = 2 * 60 * 1000;
+  let IDLE_LIMIT_MS = 2 * 60 * 1000;
+  const SETTINGS_KEY = 'uzum_inventory_settings';
   const DPKEY_RE = /^[A-Za-z0-9_-]{1,40}$/;
   const jwtRegex = /eyJ[a-zA-Z0-9_-]{25,}\.eyJ[a-zA-Z0-9_-]{25,}\.[a-zA-Z0-9_-]{25,}/g;
-  // Hamkor kodi boshida SX/RX (prefiks tekshiruvi)
   const PARTNER_RE = /^(SX|RX)(?![A-Z])/i;
-  // To'liq hamkor kodi: SX/RX + raqam + qolgan belgilar
-  const PARTNER_CODE_RE = /^(SX|RX)[-_]?\d[A-Z0-9-]*$/i;
-  // Qaysi maydonlarda hamkor kodi bo'lishi mumkin
-  const PARTNER_KEY_RE = /barcode|public|number|pid|code|external/i;
 
   // ---------------------------------------------------------------- telegram
-  // Token ikki qismga bo'lingan: boshi va oxiri alohida yoziladi.
-  const TG = {
-    enabled: true,
-    tokenHead: 'PUT_TOKEN_HEAD',
-    tokenTail: 'PUT_TOKEN_TAIL',
-    chatId: 'PUT_CHAT_ID_HERE'
+  // Token va chat ID lar sozlamalar bo'limida qo'lda kiritiladi.
+  const TG_BOT_PREFIX = '9289308469:';
+  const TG_TOKEN_RE = /^9289308469:[A-Za-z0-9_-]{20,}$/;
+  const TG_CHAT_RE = /^-?\d{3,}$/;
+  const getTgToken = () => String(getSettings().tgToken || '').trim();
+  const getTgChats = () => String(getSettings().tgChats || '')
+    .split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
+
+  // ---------------------------------------------------------------- settings
+  // Har bir funksiya sozlamalar bo'limidan yoqilib/o'chiriladi.
+  const SETTINGS_DEFAULTS = {
+    sound: true,          // skaner ovozlari
+    tgToken: '',          // Telegram bot tokeni (9289308469:... bilan boshlanadi)
+    tgChats: '',          // chat ID lar, vergul bilan ajratilgan (1 yoki bir nechta)
+    autoFocus: true,      // skaner maydonini avtomatik fokus
+    idleMinutes: 2,       // tanaffus chegarasi (daqiqa), ish vaqti uchun
+    lang: 'auto',         // auto | ru | uz
+    hotkeys: true         // Ctrl+Z — oxirgi skanni bekor qilish
   };
-  const getTgToken = () => String(TG.tokenHead || '') + String(TG.tokenTail || '');
+  const SETTINGS_META = {
+    sound: { type: 'bool' },
+    tgToken: { type: 'str' },
+    tgChats: { type: 'str' },
+    autoFocus: { type: 'bool' },
+    idleMinutes: { type: 'num', min: 1, max: 10 },
+    lang: { type: 'enum', values: ['auto', 'ru', 'uz'] },
+    hotkeys: { type: 'bool' }
+  };
+
+  function getSettings() {
+    let saved = {};
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      if (parsed && typeof parsed === 'object') saved = parsed;
+    } catch (e) {}
+    const out = { ...SETTINGS_DEFAULTS };
+    Object.keys(SETTINGS_DEFAULTS).forEach(k => {
+      if (saved[k] !== undefined) out[k] = saved[k];
+    });
+    return out;
+  }
+
+  function setSetting(key, value) {
+    const meta = SETTINGS_META[key];
+    if (!meta) return;
+    let v = value;
+    if (meta.type === 'bool') v = !!value;
+    if (meta.type === 'str') v = String(value == null ? '' : value).trim();
+    if (meta.type === 'num') v = Math.min(meta.max, Math.max(meta.min, Number(value) || SETTINGS_DEFAULTS[key]));
+    if (meta.type === 'enum' && !meta.values.includes(value)) v = SETTINGS_DEFAULTS[key];
+    const all = getSettings();
+    all[key] = v;
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(all)); } catch (e) {}
+    applySettings();
+  }
+
+  // Sozlamalarni ishlayotgan kodga qo'llash
+  function applySettings() {
+    const s = getSettings();
+    IDLE_LIMIT_MS = s.idleMinutes * 60 * 1000;
+    SOUND_ON = !!s.sound;
+    AUTO_FOCUS = !!s.autoFocus;
+    LANG_PREF = s.lang;
+    HOTKEYS_ON = !!s.hotkeys;
+  }
+  let SOUND_ON = true;
+  let AUTO_FOCUS = true;
+  let LANG_PREF = 'auto';
+  let HOTKEYS_ON = true;
+  applySettings();
 
   // ---------------------------------------------------------------- i18n
   const I18N = {
@@ -51,6 +110,36 @@
       appName: 'Ревизор ПВЗ',
       navNew: 'Новая ревизия',
       navHist: 'История ревизий',
+      navSet: 'Настройки',
+      setTitle: 'Настройки',
+      setSub: 'Включайте функции и настраивайте их под себя. Изменения сохраняются автоматически.',
+      setSound: 'Звуки сканера',
+      setSoundD: 'Звуковые сигналы при каждом скане',
+      setTg: 'Отчёт в Telegram',
+      setTgD: 'Отправлять итог ревизии в Telegram при сохранении',
+      setFocus: 'Автофокус сканера',
+      setFocusD: 'Возвращать курсор в поле ввода после клика по странице',
+      setIdle: 'Порог простоя (мин)',
+      setIdleD: 'Пауза дольше этого значения не учитывается в рабочем времени',
+      setLang: 'Язык интерфейса',
+      setLangD: 'Авто — определяется по языку сайта',
+      langAuto: 'Авто',
+      setReset: 'Сбросить настройки',
+      setResetOk: 'Настройки сброшены к значениям по умолчанию.',
+      setOn: 'Вкл',
+      setOff: 'Выкл',
+      setHot: 'Горячие клавиши',
+      setHotD: 'Ctrl+Z — отменить последний скан (на экране сканирования)',
+      setTgTok: 'Telegram bot токен',
+      setTgTokD: 'Обязателен. Начинается с 9289308469: — без него ревизию не начать',
+      setTgChat: 'Telegram ID чатов',
+      setTgChatD: 'Обязательны. Несколько ID через запятую — отчёт уйдёт во все',
+      tgNeedToken: '⚠️ Введите Telegram bot токен в Настройках. Без токена ревизия не начинается.',
+      tgBadToken: p => `⚠️ Неверный токен. Он должен начинаться с ${p}`,
+      tgTokenFormatOk: 'Формат токена верный',
+      tgNeedChat: '⚠️ Введите хотя бы один Telegram ID чата в Настройках.',
+      tgBadChat: '⚠️ Неверный ID чата. Допустимы только цифры (можно с «-» в начале).',
+      tgCheckFail: '⚠️ Токен не прошёл проверку в Telegram (getMe). Проверьте токен и подключение.',
       close: 'Закрыть',
       stepParams: 'Параметры',
       stepScan: 'Сканирование',
@@ -73,7 +162,7 @@
       statPlan: 'Товаров по плану',
       statScanned: 'Отсканировано',
       barLabel: (f, tot) => `Найдено ${f} из ${tot} шт`,
-      timerLabel: 'Рабочее время',
+      timerLabel: 'Ish vaqti',
       cellActive: 'Активная ячейка',
       cellPlaceholder: 'Отсканируйте ячейку',
       lastBarcode: 'Последний код',
@@ -285,6 +374,36 @@
       appName: 'PVZ inventarizatsiya',
       navNew: 'Yangi inventarizatsiya',
       navHist: 'Inventarizatsiyalar tarixi',
+      navSet: 'Sozlamalar',
+      setTitle: 'Sozlamalar',
+      setSub: 'Funksiyalarni yoqing va o\'zingizga moslang. O\'zgarishlar avtomatik saqlanadi.',
+      setSound: 'Skaner ovozlari',
+      setSoundD: 'Har bir skanerlashda ovozli signal',
+      setTg: 'Telegram hisoboti',
+      setTgD: 'Saqlashda inventarizatsiya natijasini Telegram ga yuborish',
+      setFocus: 'Skaner avtofokusi',
+      setFocusD: 'Sahifani bosgandan keyin kursorni kiritish maydoniga qaytarish',
+      setIdle: 'Turib qolish chegarasi (daq)',
+      setIdleD: 'Bu vaqtdan uzoq pauza ish vaqtiga kiritilmaydi',
+      setLang: 'Interfeys tili',
+      setLangD: 'Avto — sayt tiliga qarab aniqlanadi',
+      langAuto: 'Avto',
+      setReset: 'Sozlamalarni tiklash',
+      setResetOk: 'Sozlamalar standart qiymatlarga qaytarildi.',
+      setOn: 'Yoqilgan',
+      setOff: 'O\'chirilgan',
+      setHot: 'Tezkor tugmalar',
+      setHotD: 'Ctrl+Z — oxirgi skanni bekor qilish (skanerlash ekranida)',
+      setTgTok: 'Telegram bot tokeni',
+      setTgTokD: 'Majburiy. 9289308469: bilan boshlanadi — bo\'lmasa revizani boshlab bo\'lmaydi',
+      setTgChat: 'Telegram chat ID lari',
+      setTgChatD: 'Majburiy. Bir nechta ID vergul bilan — hisobot hammasiga boradi',
+      tgNeedToken: '⚠️ Sozlamalarda Telegram bot tokenini kiriting. Tokensiz revizani boshlab bo\'lmaydi.',
+      tgBadToken: p => `⚠️ Token noto'g'ri. U ${p} bilan boshlanishi kerak`,
+      tgTokenFormatOk: 'Token formati to\'g\'ri',
+      tgNeedChat: '⚠️ Sozlamalarda kamida bitta Telegram chat ID kiriting.',
+      tgBadChat: '⚠️ Chat ID noto\'g\'ri. Faqat raqamlar (boshida «-» bo\'lishi mumkin).',
+      tgCheckFail: '⚠️ Token Telegram tekshiruvidan o\'tmadi (getMe). Tokenni va internetni tekshiring.',
       close: 'Yopish',
       stepParams: 'Parametrlar',
       stepScan: 'Skanerlash',
@@ -574,7 +693,7 @@
     const now = Date.now();
     if (!force && now - lastLocaleAt < 30000) return;
     lastLocaleAt = now;
-    LANG = detectLocale();
+    LANG = LANG_PREF === 'auto' ? detectLocale() : LANG_PREF;
   }
 
   function titleCase(s) {
@@ -635,11 +754,6 @@
     return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   }
 
-  // Kodni solishtirish uchun: faqat katta harf va raqamlar
-  function normCode(s) {
-    return String(s == null ? '' : s).toUpperCase().replace(/[^A-Z0-9]/g, '');
-  }
-
   function normOrderId(o) {
     const v = o?.b2cOrderId ?? o?.orderId ?? o?.id;
     return v == null ? '' : String(v);
@@ -653,26 +767,20 @@
     return String(o?.b2cOrderBarcode ?? o?.orderBarcode ?? '').trim();
   }
 
-  // Buyurtma maydonlaridan barcha to'liq SX/RX kodlarini yig'adi
-  function findPartnerCodes(...objs) {
-    const out = [];
-    objs.forEach(o => {
-      if (!o || typeof o !== 'object') return;
-      Object.keys(o).forEach(k => {
-        if (!PARTNER_KEY_RE.test(k)) return;
-        const v = o[k];
-        if (typeof v !== 'string') return;
-        const s = v.trim();
-        if (PARTNER_CODE_RE.test(s) && !out.includes(s)) out.push(s);
-      });
-    });
-    return out;
+  // PID yoki shtrixkod boshidagi SX / RX belgisi
+  function partnerTagOf(...vals) {
+    for (const v of vals) {
+      const s = String(v == null ? '' : v).trim();
+      const m = s.match(PARTNER_RE);
+      if (m) return m[1].toUpperCase();
+    }
+    return '';
   }
 
   // UZUM BANK buyurtmasimi. SX/RX (hamkor) buyurtmalari bank hisoblanmaydi.
   function isBankOrder(o) {
     if (!o) return false;
-    if (findPartnerCodes(o).length) return false;
+    if (partnerTagOf(normPid(o), normBarcode(o))) return false;
     if (o.aerOrder === true) return true;
     return normBarcode(o).toUpperCase().startsWith('UZUM-BANK');
   }
@@ -689,15 +797,11 @@
     });
   }
 
-  // Buyurtma turi: BANK, PARTNER (SX/RX) yoki oddiy ORDER
-  function detectKind(header, withItems) {
-    if (isBankOrder(header)) return { kind: 'BANK', tag: '', codes: [] };
-    const codes = findPartnerCodes(header, withItems);
-    if (codes.length || isPartnerByType(header, withItems)) {
-      const tag = codes.length ? codes[0].slice(0, 2).toUpperCase() : '';
-      return { kind: 'PARTNER', tag, codes };
-    }
-    return { kind: 'ORDER', tag: '', codes: [] };
+  function detectKind(header, withItems, pidStr, barcodeStr) {
+    if (isBankOrder(header)) return { kind: 'BANK', tag: '' };
+    const tag = partnerTagOf(pidStr, barcodeStr);
+    if (tag || isPartnerByType(header, withItems)) return { kind: 'PARTNER', tag };
+    return { kind: 'ORDER', tag: '' };
   }
 
   function isItemable(h) {
@@ -748,10 +852,8 @@
     return ` <span class="uz-tag ${cls}">${escHtml(kindTag(r))}</span>`;
   }
 
-  // Buyurtma raqami to'liq ko'rinadi (qisqartirilmaydi)
   function pidHtml(r) {
-    const full = escHtml(r.pid || r.orderId);
-    return `<b class="uz-pid" title="${full}">${full}</b>${kindBadgeHtml(r)}`;
+    return `<b>${escHtml(r.pid || r.orderId)}</b>${kindBadgeHtml(r)}`;
   }
 
   function statusText(st) {
@@ -1087,6 +1189,7 @@
   // ---------------------------------------------------------------- sound
   let audioCtx = null;
   function beep(freq = 800, duration = 0.08, type = 'sine') {
+    if (!SOUND_ON) return;
     try {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -1126,7 +1229,6 @@
     totalScannedUnits: 0,
     ordersMap: {},
     codeToOrderId: {},
-    partnerNorm: {},
     skuIndex: {},
     factGlobal: {},
     planCellUnits: {},
@@ -1150,7 +1252,6 @@
     state.totalScannedUnits = 0;
     state.ordersMap = {};
     state.codeToOrderId = {};
-    state.partnerNorm = {};
     state.skuIndex = {};
     state.factGlobal = {};
     state.planCellUnits = {};
@@ -1291,39 +1392,29 @@
       const header = headerMap[orderIdStr] || {};
       const withItems = itemsMap[orderIdStr] || {};
       const isBank = isBankOrder(header);
-      const kinfo = detectKind(header, withItems);
-      const isPartner = kinfo.kind === 'PARTNER';
 
       const pidStr = normPid(header) || normPid(withItems);
       const barcodeStr = normBarcode(header) || normBarcode(withItems);
-      // SX/RX buyurtmada to'liq kod ko'rsatiladi (PID "1" kabi qisqa bo'lsa ham)
-      const pidShown = isPartner
-        ? ([pidStr, barcodeStr, ...kinfo.codes].find(s => s && PARTNER_CODE_RE.test(s)) || pidStr || barcodeStr || orderIdStr)
-        : (pidStr || (isBank ? barcodeStr : orderIdStr));
+      const pidShown = pidStr || (isBank ? barcodeStr : orderIdStr);
       const customer = header.customer || withItems.customer || {};
+      const kinfo = detectKind(header, withItems, pidStr, barcodeStr);
 
       // Skaner o'qishi mumkin bo'lgan barcha variantlar
       const uniq = new Set();
-      const addCode = s => {
-        if (!s) return;
-        if (isPartner && !PARTNER_CODE_RE.test(s)) return;
-        uniq.add(s);
-      };
       uniq.add(orderIdStr);
       if (!isBank) {
         uniq.add(orderIdStr.padStart(10, '0'));
         uniq.add(`10-${orderIdStr.padStart(10, '0')}-1`);
       }
-      addCode(pidStr);
+      if (pidStr) uniq.add(pidStr);
       if (barcodeStr) {
-        addCode(barcodeStr);
+        uniq.add(barcodeStr);
         const m = barcodeStr.match(/^10-(\d{10})-\d+$/);
         if (m) {
           uniq.add(m[1]);
           uniq.add(String(parseInt(m[1], 10)));
         }
       }
-      kinfo.codes.forEach(addCode);
 
       const addCargo = (arr) => {
         if (!Array.isArray(arr)) return;
@@ -1388,7 +1479,6 @@
       uniq.forEach(a => {
         skuCodes.delete(a);
         state.codeToOrderId[a] = orderIdStr;
-        if (isPartner && PARTNER_CODE_RE.test(a)) state.partnerNorm[normCode(a)] = orderIdStr;
       });
       skuCodes.forEach(s => {
         if (!state.skuIndex[s]) state.skuIndex[s] = [];
@@ -1419,19 +1509,6 @@
     if (!code) return null;
 
     if (state.codeToOrderId[code]) return { orderId: state.codeToOrderId[code], viaSku: false };
-
-    // SX/RX kodi: normallashtirilgan moslik. To'liq yoki yagona qisman moslik qabul qilinadi.
-    if (PARTNER_CODE_RE.test(code)) {
-      const n = normCode(code);
-      if (state.partnerNorm[n]) return { orderId: state.partnerNorm[n], viaSku: false };
-      if (n.length >= 8) {
-        const ids = new Set();
-        Object.keys(state.partnerNorm).forEach(k => {
-          if ((k.length >= 8 && n.startsWith(k)) || k.startsWith(n)) ids.add(state.partnerNorm[k]);
-        });
-        if (ids.size === 1) return { orderId: [...ids][0], viaSku: false };
-      }
-    }
 
     const mCargo = code.match(/^10-(\d{10})-\d+$/);
     if (mCargo) {
@@ -1722,12 +1799,10 @@
     ].join('\n');
   }
 
-  async function sendTelegramSilently(text) {
-    const token = getTgToken();
-    if (!TG.enabled || !token || !TG.chatId || token.includes('PUT_') || String(TG.chatId).includes('PUT_')) return false;
+  async function sendTgTo(token, chatId, text) {
     const url = `https://api.telegram.org/bot${token}/sendMessage`;
     const body = JSON.stringify({
-      chat_id: TG.chatId,
+      chat_id: chatId,
       text: String(text).slice(0, 4000),
       disable_web_page_preview: true
     });
@@ -1749,6 +1824,15 @@
       }
     }
     return false;
+  }
+
+  // Xabar barcha sozlangan chat ID larga yuboriladi. Hech bo'lmasa bittasiga yetsa — true.
+  async function sendTelegramSilently(text) {
+    const token = getTgToken();
+    const chats = getTgChats();
+    if (!TG_TOKEN_RE.test(token) || !chats.length) return false;
+    const results = await Promise.all(chats.map(id => sendTgTo(token, id, text)));
+    return results.some(Boolean);
   }
 
   // ---------------------------------------------------------------- xlsx (kutubxonasiz)
@@ -2156,7 +2240,8 @@
 #uzum-inv-modal .uz-navbtn:hover{background:var(--surface-2);color:var(--text)}
 #uzum-inv-modal .uz-navbtn.active{background:var(--primary);color:var(--primary-ink);box-shadow:0 8px 20px color-mix(in srgb,var(--primary) 30%,transparent)}
 #uzum-inv-modal .uz-navic{width:18px;text-align:center;font-size:15px}
-#uzum-inv-modal .uz-pvzcard{margin-top:auto;padding:12px 14px;border-radius:14px;background:var(--surface-2);border:1px solid var(--line)}
+#uzum-inv-modal .uz-navbottom{margin-top:auto;display:flex;flex-direction:column;gap:6px;padding-top:12px;border-top:1px solid var(--line)}
+#uzum-inv-modal .uz-pvzcard{margin-top:6px;padding:12px 14px;border-radius:14px;background:var(--surface-2);border:1px solid var(--line)}
 #uzum-inv-modal .uz-pvzcard .uz-lbl{display:block;margin-bottom:4px}
 #uzum-inv-modal .uz-pvzcard b{display:block;font-size:14px;font-weight:800}
 
@@ -2250,7 +2335,6 @@
 #uzum-inv-modal .uz-tbl tbody tr:hover td{background:var(--surface-2)}
 #uzum-inv-modal .uz-tbl .r{text-align:right;font-weight:800;white-space:nowrap}
 #uzum-inv-modal .uz-mono{font-family:ui-monospace,Consolas,monospace;font-weight:700}
-#uzum-inv-modal .uz-pid{font-family:ui-monospace,Consolas,monospace;font-weight:800;white-space:nowrap}
 
 #uzum-inv-modal .uz-tag{display:inline-flex;align-items:center;padding:3px 9px;margin-left:6px;border-radius:999px;font-size:10.5px;font-weight:800;letter-spacing:.3px;white-space:nowrap;vertical-align:middle;color:var(--c,var(--muted));background:var(--cs,var(--surface-2))}
 #uzum-inv-modal .uz-st{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:800;white-space:nowrap;color:var(--c,var(--muted))}
@@ -2282,6 +2366,23 @@
 #uzum-inv-modal .uz-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
 #uzum-inv-modal .uz-tc{font-size:11.5px;font-weight:800;padding:4px 10px;border-radius:8px;color:var(--c,var(--muted));background:var(--cs,var(--surface-2))}
 #uzum-inv-modal .uz-acts{display:flex;gap:8px;flex-wrap:wrap}
+
+#uzum-inv-modal .uz-setcard{padding:6px 20px}
+#uzum-inv-modal .uz-in-wide{width:min(340px,60vw);min-height:40px;font-size:13.5px;font-weight:600}
+#uzum-inv-modal .uz-setctl .uz-dpst{margin-top:8px;padding:7px 10px;font-size:12px}
+#uzum-inv-modal .uz-setrow{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0;border-bottom:1px solid var(--line)}
+#uzum-inv-modal .uz-setrow:last-child{border-bottom:0}
+#uzum-inv-modal .uz-setinfo{display:flex;flex-direction:column;gap:3px;min-width:0}
+#uzum-inv-modal .uz-setinfo b{font-size:14px;font-weight:800}
+#uzum-inv-modal .uz-setinfo .uz-muted{font-size:12.5px}
+#uzum-inv-modal .uz-setctl{flex-shrink:0}
+#uzum-inv-modal .uz-in-sm{width:auto;min-width:120px;min-height:40px;font-size:14px}
+#uzum-inv-modal .uz-toggle{display:inline-flex;align-items:center;gap:10px;min-height:34px;padding:4px 12px 4px 4px;border-radius:999px;border:1px solid var(--line-2);background:var(--surface-2);color:var(--muted);font-weight:700;font-size:12.5px;cursor:pointer}
+#uzum-inv-modal .uz-toggle-k{width:26px;height:26px;border-radius:50%;background:var(--surface-3);transition:transform .2s ease,background .2s ease}
+#uzum-inv-modal .uz-toggle.on{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent)}
+#uzum-inv-modal .uz-toggle.on .uz-toggle-k{background:var(--ok);transform:translateX(0)}
+#uzum-inv-modal .uz-toggle:not(.on) .uz-toggle-k{background:var(--line-2)}
+#uzum-inv-modal .uz-setfoot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:14px}
 
 @media (max-width:980px){
   #uzum-inv-modal .uz-app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
@@ -2388,6 +2489,7 @@
     set('u-app-name', t('appName'));
     set('u-tab-new-t', t('navNew'));
     set('u-tab-history-t', t('navHist'));
+    set('u-tab-settings-t', t('navSet'));
     set('u-side-lbl', t('pvz'));
     set('u-step-1', t('stepParams'));
     set('u-step-2', t('stepScan'));
@@ -2452,13 +2554,14 @@
       start: [t('setupTitle'), t('setupHint')],
       scan: [t('scanTitle', pvz), t('scanSub')],
       report: [t('reportTitle', pvz), t('reportSub')],
-      history: [t('histTitle'), t('histSub')]
+      history: [t('histTitle'), t('histSub')],
+      settings: [t('setTitle'), t('setSub')]
     };
     const pair = map[name] || map.start;
     $('u-h1').textContent = pair[0];
     $('u-sub').textContent = pair[1];
     const steps = $('u-steps');
-    if (steps) steps.style.display = name === 'history' ? 'none' : '';
+    if (steps) steps.style.display = (name === 'history' || name === 'settings') ? 'none' : '';
     updateSteps(name);
     renderHeadActions(name);
   }
@@ -2472,14 +2575,17 @@
   function showScreen(name) {
     if (name === 'report') renderReportScreen();
     if (name === 'history') renderHistoryScreen();
+    if (name === 'settings') renderSettingsScreen();
     state.screen = name;
     if (name === 'scan' || name === 'report' || name === 'start') state.workScreen = name;
-    ['start', 'scan', 'report', 'history'].forEach(n => {
+    ['start', 'scan', 'report', 'history', 'settings'].forEach(n => {
       const el = $(`u-${n}-screen`);
       if (el) el.style.display = n === name ? '' : 'none';
     });
-    $('u-tab-new').classList.toggle('active', name !== 'history');
+    const isWork = !['history', 'settings'].includes(name);
+    $('u-tab-new').classList.toggle('active', isWork);
     $('u-tab-history').classList.toggle('active', name === 'history');
+    $('u-tab-settings').classList.toggle('active', name === 'settings');
     updateSidePvz();
     updatePageHead(name);
     if (name === 'scan') focusScanInput();
@@ -2499,7 +2605,7 @@
     Object.entries(orderItems).forEach(([oId, qty]) => {
       const o = state.ordersMap[oId] || {};
       rows.push([
-        `<b class="uz-pid">${escHtml(t('orderLabel', o.pid || oId))}</b>${kindBadgeHtml(o)} <span class="uz-muted">${safeCustomerName(o.customer)}</span>`,
+        `<b>${escHtml(t('orderLabel', o.pid || oId))}</b>${kindBadgeHtml(o)} <span class="uz-muted">${safeCustomerName(o.customer)}</span>`,
         `<span class="r uz-c s-ok">${escHtml(t('pcs', qty))}</span>`
       ]);
     });
@@ -2729,6 +2835,105 @@
     });
   }
 
+  // ---------------------------------------------------------------- telegram config check
+  function tgTokenStatus(tok) {
+    if (!tok) return `<div class="uz-dpst s-bad">${escHtml(t('tgNeedToken'))}</div>`;
+    if (!TG_TOKEN_RE.test(tok)) return `<div class="uz-dpst s-bad">${escHtml(t('tgBadToken', TG_BOT_PREFIX))}</div>`;
+    return `<div class="uz-dpst s-ok">${escHtml(t('tgTokenFormatOk'))}</div>`;
+  }
+
+  // Inventni boshlashdan oldin: token, chat ID lar va tokenning haqiqiyligi (getMe) tekshiriladi
+  async function checkTelegramConfig() {
+    const token = getTgToken();
+    if (!token) return t('tgNeedToken');
+    if (!TG_TOKEN_RE.test(token)) return t('tgBadToken', TG_BOT_PREFIX);
+    const chats = getTgChats();
+    if (!chats.length) return t('tgNeedChat');
+    if (chats.some(c => !TG_CHAT_RE.test(c))) return t('tgBadChat');
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 10000);
+      const res = await fetch(`https://api.telegram.org/bot${token}/getMe`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      const j = await res.json().catch(() => null);
+      if (!res.ok || !j || !j.ok) return t('tgCheckFail');
+    } catch (e) {
+      return t('tgCheckFail');
+    }
+    return '';
+  }
+
+  // ---------------------------------------------------------------- settings screen
+  function settingRow(key, title, desc, control) {
+    return `<div class="uz-setrow">
+      <div class="uz-setinfo"><b>${escHtml(title)}</b><span class="uz-muted">${escHtml(desc)}</span></div>
+      <div class="uz-setctl">${control}</div>
+    </div>`;
+  }
+
+  function toggleCtl(key, on) {
+    return `<button type="button" class="uz-toggle ${on ? 'on' : ''}" data-set="${key}" data-type="bool" aria-pressed="${on}">
+      <span class="uz-toggle-k"></span><span class="uz-toggle-t">${escHtml(on ? t('setOn') : t('setOff'))}</span></button>`;
+  }
+
+  function renderSettingsScreen() {
+    refreshLocale();
+    const s = getSettings();
+    const langOpts = [['auto', t('langAuto')], ['ru', 'Русский'], ['uz', "O'zbekcha"]]
+      .map(([v, label]) => `<option value="${v}" ${s.lang === v ? 'selected' : ''}>${escHtml(label)}</option>`).join('');
+
+    const rows = [
+      settingRow('sound', t('setSound'), t('setSoundD'), toggleCtl('sound', s.sound)),
+      settingRow('tgToken', t('setTgTok'), t('setTgTokD'),
+        `<input type="text" class="uz-in uz-in-wide" data-set="tgToken" data-type="str" autocomplete="off" spellcheck="false" placeholder="${escHtml(TG_BOT_PREFIX)}..." value="${escHtml(s.tgToken)}">${tgTokenStatus(s.tgToken)}`),
+      settingRow('tgChats', t('setTgChat'), t('setTgChatD'),
+        `<input type="text" class="uz-in uz-in-wide" data-set="tgChats" data-type="str" autocomplete="off" spellcheck="false" placeholder="123456789, -1001234567890" value="${escHtml(s.tgChats)}">`),
+      settingRow('autoFocus', t('setFocus'), t('setFocusD'), toggleCtl('autoFocus', s.autoFocus)),
+      settingRow('hotkeys', t('setHot'), t('setHotD'), toggleCtl('hotkeys', s.hotkeys)),
+      settingRow('idleMinutes', t('setIdle'), t('setIdleD'),
+        `<input type="number" class="uz-in uz-in-sm" data-set="idleMinutes" data-type="num" min="1" max="10" value="${s.idleMinutes}">`),
+      settingRow('lang', t('setLang'), t('setLangD'),
+        `<select class="uz-in uz-in-sm" data-set="lang" data-type="enum">${langOpts}</select>`)
+    ].join('');
+
+    $('u-settings-screen').innerHTML = `
+      <div class="uz-card uz-setcard">${rows}</div>
+      <div class="uz-setfoot">
+        <span class="uz-muted" id="u-set-msg"></span>
+        <button type="button" class="uz-btn danger" id="u-set-reset">${escHtml(t('setReset'))}</button>
+      </div>`;
+
+    const root = $('u-settings-screen');
+    root.querySelectorAll('[data-set]').forEach(el => {
+      const key = el.getAttribute('data-set');
+      const type = el.getAttribute('data-type');
+      const apply = () => {
+        let val;
+        if (type === 'bool') val = !(el.classList.contains('on'));
+        else val = el.value;
+        setSetting(key, val);
+        renderSettingsScreen();
+        flashSettingsMsg(t('setSaved'));
+      };
+      if (type === 'bool') el.onclick = apply;
+      else el.onchange = apply;
+    });
+    $('u-set-reset').onclick = () => {
+      try { localStorage.removeItem(SETTINGS_KEY); } catch (e) {}
+      applySettings();
+      renderSettingsScreen();
+      flashSettingsMsg(t('setResetOk'));
+    };
+  }
+
+  function flashSettingsMsg(text) {
+    const el = $('u-set-msg');
+    if (!el) return;
+    el.textContent = text;
+    clearTimeout(flashSettingsMsg._t);
+    flashSettingsMsg._t = setTimeout(() => { if (el) el.textContent = ''; }, 2000);
+  }
+
   // ---------------------------------------------------------------- setup / flow
   function fillSetup() {
     const detectedName = detectPvzNameFromHeader();
@@ -2760,6 +2965,13 @@
     const dpKey = $('u-pvz-dpkey-input').value.trim();
 
     if (state.totalScannedUnits > 0 && !state.savedInSession && !confirm(t('restartConfirm'))) return;
+
+    const tgErr = await checkTelegramConfig();
+    if (tgErr) {
+      setDpStatus('bad', tgErr);
+      alert(tgErr);
+      return;
+    }
 
     state.loading = true;
     btn.disabled = true;
@@ -2807,6 +3019,8 @@
 
     if (state.screen === 'history') {
       showScreen('history');
+    } else if (state.screen === 'settings') {
+      showScreen('settings');
     } else if (state.workScreen === 'scan' || state.workScreen === 'report') {
       showScreen(state.workScreen);
     } else {
@@ -2834,12 +3048,15 @@
           </div>
           <nav class="uz-nav">
             <button type="button" class="uz-navbtn active" id="u-tab-new"><span class="uz-navic">＋</span><span id="u-tab-new-t"></span></button>
-            <button type="button" class="uz-navbtn" id="u-tab-history"><span class="uz-navic">▤</span><span id="u-tab-history-t"></span></button>
           </nav>
           <div class="uz-pvzcard">
             <span class="uz-lbl" id="u-side-lbl"></span>
             <b id="u-side-pvz">—</b>
           </div>
+          <nav class="uz-navbottom">
+            <button type="button" class="uz-navbtn" id="u-tab-history"><span class="uz-navic">▤</span><span id="u-tab-history-t"></span></button>
+            <button type="button" class="uz-navbtn" id="u-tab-settings"><span class="uz-navic">⚙</span><span id="u-tab-settings-t"></span></button>
+          </nav>
         </aside>
 
         <main class="uz-main">
@@ -2932,6 +3149,8 @@
               <input type="search" id="u-hist-search" class="uz-hsearch">
               <div id="u-hist-container"></div>
             </section>
+
+            <section id="u-settings-screen" style="display:none"></section>
           </div>
         </main>
       </div>
@@ -2945,6 +3164,7 @@
     $('u-close').onclick = closeModal;
     $('u-tab-new').onclick = () => showScreen(state.workScreen || 'start');
     $('u-tab-history').onclick = () => showScreen('history');
+    $('u-tab-settings').onclick = () => showScreen('settings');
     $('u-hist-search').oninput = e => renderHistoryScreen(e.target.value);
     $('u-load-btn').onclick = onLoadClick;
     $('u-undo-btn').onclick = () => { undoLastScan(); focusScanInput(); };
@@ -2965,7 +3185,7 @@
     });
     scanInp.addEventListener('blur', () => {
       setTimeout(() => {
-        if (isScanningActive() && !isTypingElsewhere()) focusScanInput();
+        if (AUTO_FOCUS && isScanningActive() && !isTypingElsewhere()) focusScanInput();
       }, 60);
     });
     $('u-scan-screen').addEventListener('click', e => {
@@ -3043,6 +3263,13 @@
 
   function closeOnEscape(e) {
     if (e.key === 'Escape' && isModalOpen()) closeModal();
+    // Yangi funksiya: Ctrl+Z — oxirgi skanni bekor qilish (sozlamada yoqilgan bo'lsa)
+    if (HOTKEYS_ON && isScanningActive() && (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey && e.key.toLowerCase() === 'z' && !isTypingElsewhere()) {
+      e.preventDefault();
+      undoLastScan();
+      focusScanInput();
+    }
   }
 
   // ---------------------------------------------------------------- boot
