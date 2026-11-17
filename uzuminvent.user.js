@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uzum Ревизор ПВЗ
 // @namespace    https://dp.uzum.uz/
-// @version      1.8.1
+// @version      1.8.2
 // @description  Ревизия склада ПВЗ Uzum Market: проверка ID точки, потоварная инвентаризация, приёмка, возвраты, пересорт, партнёрские заказы (SX/RX), время работы, история и Excel-акт
 // @author       Хожиев Сухроб
 // @match        https://dp.uzum.uz/*
@@ -16,7 +16,7 @@
   if (window.__uzumInvLoaded) return;
   window.__uzumInvLoaded = true;
 
-  const VERSION = '1.8.1';
+  const VERSION = '1.8.2';
   const API = 'https://api-wms.uzum.uz/de/delivery-point';
   const API_V3 = 'https://api-wms.uzum.uz/de/v3/delivery-point';
   const HISTORY_KEY = 'uzum_inventory_history';
@@ -763,6 +763,29 @@
     return String(o?.b2cOrderPublicId ?? o?.b2cPublicOrderId ?? o?.orderNumber ?? '').trim();
   }
 
+  // Hamkor (SX/RX) buyurtma raqamining to'liq ko'rinishi: RX225554565UZ, SX24456654456UZ
+  const PARTNER_FULL_RE = /^(SX|RX)\d{4,}[A-Z0-9-]*$/i;
+  function findPartnerFullId(o) {
+    if (!o || typeof o !== 'object') return '';
+    let best = '';
+    for (const v of Object.values(o)) {
+      if (typeof v !== 'string') continue;
+      const s = v.trim();
+      if (PARTNER_FULL_RE.test(s) && s.length > best.length) best = s;
+    }
+    return best;
+  }
+
+  // Hamkor raqami bo'lsa, eng uzun (to'liq) variantni tanlaydi
+  function pickPartnerPid(...vals) {
+    let best = '';
+    for (const v of vals) {
+      const s = String(v == null ? '' : v).trim();
+      if (PARTNER_FULL_RE.test(s) && s.length > best.length) best = s;
+    }
+    return best;
+  }
+
   function normBarcode(o) {
     return String(o?.b2cOrderBarcode ?? o?.orderBarcode ?? '').trim();
   }
@@ -1393,7 +1416,11 @@
       const withItems = itemsMap[orderIdStr] || {};
       const isBank = isBankOrder(header);
 
-      const pidStr = normPid(header) || normPid(withItems);
+      const pidStr = pickPartnerPid(
+        normPid(header), normPid(withItems),
+        findPartnerFullId(header), findPartnerFullId(withItems),
+        normBarcode(header), normBarcode(withItems)
+      ) || normPid(header) || normPid(withItems);
       const barcodeStr = normBarcode(header) || normBarcode(withItems);
       const pidShown = pidStr || (isBank ? barcodeStr : orderIdStr);
       const customer = header.customer || withItems.customer || {};
@@ -2098,7 +2125,7 @@
       });
     }
 
-    const colWidths = [6, 30, 14, 24, 16, 18, 24, 28, 44];
+    const colWidths = [6, 38, 14, 24, 16, 18, 24, 28, 44];
     const blob = createRealXlsxBlob([{ name: t('sheetName'), rows, cols: colWidths }]);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
