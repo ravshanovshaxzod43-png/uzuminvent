@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uzum Ревизор ПВЗ
 // @namespace    https://dp.uzum.uz/
-// @version      1.8.2
+// @version      1.8.3
 // @description  Ревизия склада ПВЗ Uzum Market: проверка ID точки, потоварная инвентаризация, приёмка, возвраты, пересорт, партнёрские заказы (SX/RX), время работы, история и Excel-акт
 // @author       Хожиев Сухроб
 // @match        https://dp.uzum.uz/*
@@ -16,7 +16,7 @@
   if (window.__uzumInvLoaded) return;
   window.__uzumInvLoaded = true;
 
-  const VERSION = '1.8.2';
+  const VERSION = '1.8.3';
   const API = 'https://api-wms.uzum.uz/de/delivery-point';
   const API_V3 = 'https://api-wms.uzum.uz/de/v3/delivery-point';
   const HISTORY_KEY = 'uzum_inventory_history';
