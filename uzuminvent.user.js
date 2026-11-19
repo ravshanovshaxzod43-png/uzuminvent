@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uzum Ревизор ПВЗ
 // @namespace    https://dp.uzum.uz/
-// @version      1.8.4
+// @version      1.8.9
 // @description  Ревизия склада ПВЗ Uzum Market: проверка ID точки, потоварная инвентаризация, приёмка, возвраты, пересорт, партнёрские заказы (SX/RX), время работы, история и Excel-акт
 // @author       Хожиев Сухроб
 // @match        https://dp.uzum.uz/*
@@ -16,7 +16,7 @@
   if (window.__uzumInvLoaded) return;
   window.__uzumInvLoaded = true;
 
-  const VERSION = '1.8.4';
+  const VERSION = '1.8.9';
   const API = 'https://api-wms.uzum.uz/de/delivery-point';
   const API_V3 = 'https://api-wms.uzum.uz/de/v3/delivery-point';
   const HISTORY_KEY = 'uzum_inventory_history';
@@ -137,7 +137,6 @@
       tgNeedChat: '⚠️ Не заданы Telegram ID чатов для отчёта.',
       tgBadChat: '⚠️ Неверный ID чата. Допустимы только цифры (можно с «-» в начале).',
       tgCheckFail: '⚠️ Токен не прошёл проверку в Telegram (getMe). Проверьте токен и подключение.',
-      tgSentOk: (s, n) => `✓ Отчёт (Excel) отправлен в Telegram: ${s} из ${n}.`,
       tgSentFail: (s, n) => `⚠️ Отчёт в Telegram отправлен не полностью: ${s} из ${n}. Отправьте Excel вручную.`,
       close: 'Закрыть',
       stepParams: 'Параметры',
@@ -401,7 +400,6 @@
       tgNeedChat: '⚠️ Hisobot uchun Telegram chat ID lari belgilanmagan.',
       tgBadChat: '⚠️ Chat ID noto\'g\'ri. Faqat raqamlar (boshida «-» bo\'lishi mumkin).',
       tgCheckFail: '⚠️ Token Telegram tekshiruvidan o\'tmadi (getMe). Tokenni va internetni tekshiring.',
-      tgSentOk: (s, n) => `✓ Hisobot (Excel) Telegram ga yuborildi: ${s} / ${n}.`,
       tgSentFail: (s, n) => `⚠️ Hisobot Telegram ga to'liq yuborilmadi: ${s} / ${n}. Excel faylni qo'lda yuboring.`,
       close: 'Yopish',
       stepParams: 'Parametrlar',
@@ -2243,10 +2241,14 @@
       return;
     }
 
-    // Excel fayl Telegram ga yuboriladi, caption sifatida qisqa xulosa qo'yiladi
+    // Excel fayl Telegram ga yuboriladi. Muvaffaqiyatli bo'lsa faqat saqlash xabari chiqadi
     const total = getTgChats().length;
     const sent = await sendTelegramReport(file.blob, file.filename, buildTelegramText(auditEntry));
-    alert(`${t('savedOk', state.activePvzName)}\n\n${sent === total ? t('tgSentOk', sent, total) : t('tgSentFail', sent, total)}`);
+    if (sent === total) {
+      alert(t('savedOk', state.activePvzName));
+    } else {
+      alert(`${t('savedOk', state.activePvzName)}\n\n${t('tgSentFail', sent, total)}`);
+    }
   }
 
   // ---------------------------------------------------------------- CSS
