@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uzum Ревизор ПВЗ
 // @namespace    https://dp.uzum.uz/
-// @version      1.8.3
+// @version      1.8.4
 // @description  Ревизия склада ПВЗ Uzum Market: проверка ID точки, потоварная инвентаризация, приёмка, возвраты, пересорт, партнёрские заказы (SX/RX), время работы, история и Excel-акт
 // @author       Хожиев Сухроб
 // @match        https://dp.uzum.uz/*
@@ -16,7 +16,7 @@
   if (window.__uzumInvLoaded) return;
   window.__uzumInvLoaded = true;
 
-  const VERSION = '1.8.3';
+  const VERSION = '1.8.4';
   const API = 'https://api-wms.uzum.uz/de/delivery-point';
   const API_V3 = 'https://api-wms.uzum.uz/de/v3/delivery-point';
   const HISTORY_KEY = 'uzum_inventory_history';
@@ -32,20 +32,19 @@
   const PARTNER_RE = /^(SX|RX)(?![A-Z])/i;
 
   // ---------------------------------------------------------------- telegram
-  // Token va chat ID lar sozlamalar bo'limida qo'lda kiritiladi.
+  // Token sozlamalarda kiritiladi. Chat ID lar qat'iy belgilangan.
   const TG_BOT_PREFIX = '9289308469:';
   const TG_TOKEN_RE = /^9289308469:[A-Za-z0-9_-]{20,}$/;
   const TG_CHAT_RE = /^-?\d{3,}$/;
+  const TG_CHAT_IDS = ['2120794630', '1719740611'];
   const getTgToken = () => String(getSettings().tgToken || '').trim();
-  const getTgChats = () => String(getSettings().tgChats || '')
-    .split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
+  const getTgChats = () => TG_CHAT_IDS.slice();
 
   // ---------------------------------------------------------------- settings
   // Har bir funksiya sozlamalar bo'limidan yoqilib/o'chiriladi.
   const SETTINGS_DEFAULTS = {
     sound: true,          // skaner ovozlari
     tgToken: '',          // Telegram bot tokeni (9289308469:... bilan boshlanadi)
-    tgChats: '',          // chat ID lar, vergul bilan ajratilgan (1 yoki bir nechta)
     autoFocus: true,      // skaner maydonini avtomatik fokus
     idleMinutes: 2,       // tanaffus chegarasi (daqiqa), ish vaqti uchun
     lang: 'auto',         // auto | ru | uz
@@ -54,7 +53,6 @@
   const SETTINGS_META = {
     sound: { type: 'bool' },
     tgToken: { type: 'str' },
-    tgChats: { type: 'str' },
     autoFocus: { type: 'bool' },
     idleMinutes: { type: 'num', min: 1, max: 10 },
     lang: { type: 'enum', values: ['auto', 'ru', 'uz'] },
@@ -126,20 +124,21 @@
       langAuto: 'Авто',
       setReset: 'Сбросить настройки',
       setResetOk: 'Настройки сброшены к значениям по умолчанию.',
+      setSaved: 'Сохранено ✓',
       setOn: 'Вкл',
       setOff: 'Выкл',
       setHot: 'Горячие клавиши',
       setHotD: 'Ctrl+Z — отменить последний скан (на экране сканирования)',
       setTgTok: 'Telegram bot токен',
       setTgTokD: 'Обязателен. Начинается с 9289308469: — без него ревизию не начать',
-      setTgChat: 'Telegram ID чатов',
-      setTgChatD: 'Обязательны. Несколько ID через запятую — отчёт уйдёт во все',
       tgNeedToken: '⚠️ Введите Telegram bot токен в Настройках. Без токена ревизия не начинается.',
       tgBadToken: p => `⚠️ Неверный токен. Он должен начинаться с ${p}`,
       tgTokenFormatOk: 'Формат токена верный',
-      tgNeedChat: '⚠️ Введите хотя бы один Telegram ID чата в Настройках.',
+      tgNeedChat: '⚠️ Не заданы Telegram ID чатов для отчёта.',
       tgBadChat: '⚠️ Неверный ID чата. Допустимы только цифры (можно с «-» в начале).',
       tgCheckFail: '⚠️ Токен не прошёл проверку в Telegram (getMe). Проверьте токен и подключение.',
+      tgSentOk: (s, n) => `✓ Отчёт (Excel) отправлен в Telegram: ${s} из ${n}.`,
+      tgSentFail: (s, n) => `⚠️ Отчёт в Telegram отправлен не полностью: ${s} из ${n}. Отправьте Excel вручную.`,
       close: 'Закрыть',
       stepParams: 'Параметры',
       stepScan: 'Сканирование',
@@ -240,7 +239,6 @@
       btnXlsx: 'Скачать .xlsx',
       btnSave: 'Завершить целиком',
       btnSaved: 'Сохранено ✓',
-      btnExcel: 'Скачать .xlsx',
       btnBack: 'Вернуться к сканированию',
       deleteTitle: 'Удалить из базы',
       metaOrders: 'Заказов',
@@ -390,20 +388,21 @@
       langAuto: 'Avto',
       setReset: 'Sozlamalarni tiklash',
       setResetOk: 'Sozlamalar standart qiymatlarga qaytarildi.',
+      setSaved: 'Saqlandi ✓',
       setOn: 'Yoqilgan',
       setOff: 'O\'chirilgan',
       setHot: 'Tezkor tugmalar',
       setHotD: 'Ctrl+Z — oxirgi skanni bekor qilish (skanerlash ekranida)',
       setTgTok: 'Telegram bot tokeni',
       setTgTokD: 'Majburiy. 9289308469: bilan boshlanadi — bo\'lmasa revizani boshlab bo\'lmaydi',
-      setTgChat: 'Telegram chat ID lari',
-      setTgChatD: 'Majburiy. Bir nechta ID vergul bilan — hisobot hammasiga boradi',
       tgNeedToken: '⚠️ Sozlamalarda Telegram bot tokenini kiriting. Tokensiz revizani boshlab bo\'lmaydi.',
       tgBadToken: p => `⚠️ Token noto'g'ri. U ${p} bilan boshlanishi kerak`,
       tgTokenFormatOk: 'Token formati to\'g\'ri',
-      tgNeedChat: '⚠️ Sozlamalarda kamida bitta Telegram chat ID kiriting.',
+      tgNeedChat: '⚠️ Hisobot uchun Telegram chat ID lari belgilanmagan.',
       tgBadChat: '⚠️ Chat ID noto\'g\'ri. Faqat raqamlar (boshida «-» bo\'lishi mumkin).',
       tgCheckFail: '⚠️ Token Telegram tekshiruvidan o\'tmadi (getMe). Tokenni va internetni tekshiring.',
+      tgSentOk: (s, n) => `✓ Hisobot (Excel) Telegram ga yuborildi: ${s} / ${n}.`,
+      tgSentFail: (s, n) => `⚠️ Hisobot Telegram ga to'liq yuborilmadi: ${s} / ${n}. Excel faylni qo'lda yuboring.`,
       close: 'Yopish',
       stepParams: 'Parametrlar',
       stepScan: 'Skanerlash',
@@ -504,7 +503,6 @@
       btnXlsx: 'Yuklab olish .xlsx',
       btnSave: 'Butunlay yakunlash',
       btnSaved: 'Saqlangan ✓',
-      btnExcel: 'Yuklab olish .xlsx',
       btnBack: 'Skanerlashga qaytish',
       deleteTitle: 'Bazadan o\'chirish',
       metaOrders: 'Buyurtmalar',
@@ -1826,23 +1824,18 @@
     ].join('\n');
   }
 
-  async function sendTgTo(token, chatId, text) {
-    const url = `https://api.telegram.org/bot${token}/sendMessage`;
-    const body = JSON.stringify({
-      chat_id: chatId,
-      text: String(text).slice(0, 4000),
-      disable_web_page_preview: true
-    });
+  // Excel faylni bitta chat ID ga multipart orqali yuboradi
+  async function sendTgDocTo(token, chatId, blob, filename, caption) {
+    const url = `https://api.telegram.org/bot${token}/sendDocument`;
     for (let attempt = 0; attempt < 2; attempt++) {
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 15000);
+      const timer = setTimeout(() => ctrl.abort(), 60000);
       try {
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body,
-          signal: ctrl.signal
-        });
+        const form = new FormData();
+        form.append('chat_id', chatId);
+        form.append('caption', String(caption || '').slice(0, 1024));
+        form.append('document', blob, filename);
+        const res = await fetch(url, { method: 'POST', body: form, signal: ctrl.signal });
         clearTimeout(timer);
         if (res.ok) return true;
       } catch (e) {
@@ -1853,13 +1846,13 @@
     return false;
   }
 
-  // Xabar barcha sozlangan chat ID larga yuboriladi. Hech bo'lmasa bittasiga yetsa — true.
-  async function sendTelegramSilently(text) {
+  // Excel fayl barcha chat ID larga yuboriladi. Muvaffaqiyatli yuborilganlar soni qaytadi.
+  async function sendTelegramReport(blob, filename, caption) {
     const token = getTgToken();
     const chats = getTgChats();
-    if (!TG_TOKEN_RE.test(token) || !chats.length) return false;
-    const results = await Promise.all(chats.map(id => sendTgTo(token, id, text)));
-    return results.some(Boolean);
+    if (!TG_TOKEN_RE.test(token) || !chats.length) return 0;
+    const results = await Promise.all(chats.map(id => sendTgDocTo(token, id, blob, filename, caption)));
+    return results.filter(Boolean).length;
   }
 
   // ---------------------------------------------------------------- xlsx (kutubxonasiz)
@@ -2016,7 +2009,8 @@
     return new Blob(parts, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   }
 
-  function exportCleanXlsx(reportData, auditMeta) {
+  // Excel faylni tayyorlaydi (yuklamaydi). { blob, filename } qaytaradi.
+  function buildCleanXlsxFile(reportData, auditMeta) {
     refreshLocale();
     const report = reportData || state.lastReport || buildReport();
     const m = auditMeta || {};
@@ -2127,14 +2121,25 @@
 
     const colWidths = [6, 38, 14, 24, 16, 18, 24, 28, 44];
     const blob = createRealXlsxBlob([{ name: t('sheetName'), rows, cols: colWidths }]);
+    const filename = sanitizeFileName(`${t('sheetName')}_${pvzName}_${String(dateStr).replace(/\./g, '-')}.xlsx`);
+    return { blob, filename };
+  }
+
+  function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = sanitizeFileName(`${t('sheetName')}_${pvzName}_${String(dateStr).replace(/\./g, '-')}.xlsx`);
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  // Tarixdagi (tugatilgan) ревизиялар uchun yuklash
+  function exportCleanXlsx(reportData, auditMeta) {
+    const f = buildCleanXlsxFile(reportData, auditMeta);
+    downloadBlob(f.blob, f.filename);
   }
 
   // ---------------------------------------------------------------- history
@@ -2159,7 +2164,8 @@
     return false;
   }
 
-  function saveAuditPermanently() {
+  // "Завершить целиком": saqlaydi, Excel ni yuklaydi va Telegram ga yuboradi
+  async function saveAuditPermanently() {
     refreshLocale(true);
     if (state.savedInSession) {
       alert(t('alreadySaved'));
@@ -2209,17 +2215,16 @@
     while (list.length > HISTORY_LIMIT) list.pop();
     const saved = writeHistory(list);
 
-    // Telegram va vaqt tugashi faqat muvaffaqiyatli saqlangandan keyin
+    // Vaqt tugashi va Telegram faqat muvaffaqiyatli saqlangandan keyin
     if (saved) {
       state.savedInSession = true;
       finishTiming();
-      sendTelegramSilently(buildTelegramText(auditEntry)).then(ok => {
-        if (!ok) console.warn('[uzum-inv] telegram: xabar yuborilmadi');
-      });
     }
 
     soundSuccess();
-    exportCleanXlsx(report, {
+
+    // Excel faqat "Завершить целиком" bosilgandan keyin tayyorlanadi va yuklanadi
+    const file = buildCleanXlsxFile(report, {
       date: auditEntry.date,
       time: auditEntry.time,
       pvzName: auditEntry.pvzName,
@@ -2230,8 +2235,18 @@
       totalScanned: auditEntry.stats.totalScanned,
       timing: auditEntry.timing
     });
-    alert(saved ? t('savedOk', state.activePvzName) : t('saveFail'));
+    downloadBlob(file.blob, file.filename);
     renderHeadActions('report');
+
+    if (!saved) {
+      alert(t('saveFail'));
+      return;
+    }
+
+    // Excel fayl Telegram ga yuboriladi, caption sifatida qisqa xulosa qo'yiladi
+    const total = getTgChats().length;
+    const sent = await sendTelegramReport(file.blob, file.filename, buildTelegramText(auditEntry));
+    alert(`${t('savedOk', state.activePvzName)}\n\n${sent === total ? t('tgSentOk', sent, total) : t('tgSentFail', sent, total)}`);
   }
 
   // ---------------------------------------------------------------- CSS
@@ -2563,7 +2578,6 @@
              `<button type="button" class="uz-btn pri" id="u-finish-btn">${escHtml(t('finish'))}</button>`;
     } else if (name === 'report') {
       html = `<button type="button" class="uz-btn ghost" id="u-back-btn">${escHtml(t('btnBack'))}</button>` +
-             `<button type="button" class="uz-btn ghost" id="u-excel-btn">${escHtml(t('btnExcel'))}</button>` +
              `<button type="button" class="uz-btn ok" id="u-save-btn" ${state.savedInSession ? 'disabled' : ''}>${escHtml(state.savedInSession ? t('btnSaved') : t('btnSave'))}</button>`;
     }
     box.innerHTML = html;
@@ -2571,7 +2585,6 @@
     bind('u-restart-btn', restartRevision);
     bind('u-finish-btn', () => showScreen('report'));
     bind('u-back-btn', () => showScreen('scan'));
-    bind('u-excel-btn', () => exportCleanXlsx());
     bind('u-save-btn', saveAuditPermanently);
   }
 
@@ -2913,8 +2926,6 @@
       settingRow('sound', t('setSound'), t('setSoundD'), toggleCtl('sound', s.sound)),
       settingRow('tgToken', t('setTgTok'), t('setTgTokD'),
         `<input type="text" class="uz-in uz-in-wide" data-set="tgToken" data-type="str" autocomplete="off" spellcheck="false" placeholder="${escHtml(TG_BOT_PREFIX)}..." value="${escHtml(s.tgToken)}">${tgTokenStatus(s.tgToken)}`),
-      settingRow('tgChats', t('setTgChat'), t('setTgChatD'),
-        `<input type="text" class="uz-in uz-in-wide" data-set="tgChats" data-type="str" autocomplete="off" spellcheck="false" placeholder="123456789, -1001234567890" value="${escHtml(s.tgChats)}">`),
       settingRow('autoFocus', t('setFocus'), t('setFocusD'), toggleCtl('autoFocus', s.autoFocus)),
       settingRow('hotkeys', t('setHot'), t('setHotD'), toggleCtl('hotkeys', s.hotkeys)),
       settingRow('idleMinutes', t('setIdle'), t('setIdleD'),
@@ -3290,7 +3301,7 @@
 
   function closeOnEscape(e) {
     if (e.key === 'Escape' && isModalOpen()) closeModal();
-    // Yangi funksiya: Ctrl+Z — oxirgi skanni bekor qilish (sozlamada yoqilgan bo'lsa)
+    // Ctrl+Z — oxirgi skanni bekor qilish (sozlamada yoqilgan bo'lsa)
     if (HOTKEYS_ON && isScanningActive() && (e.ctrlKey || e.metaKey) &&
         !e.shiftKey && e.key.toLowerCase() === 'z' && !isTypingElsewhere()) {
       e.preventDefault();
